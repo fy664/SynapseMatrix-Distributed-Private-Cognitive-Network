@@ -9,6 +9,10 @@ venv/
 # 构建产物
 build/
 dist/
+*.obj
+*.exe
+*.o
+*.a
 
 # 运行数据 / 日志
 *.log

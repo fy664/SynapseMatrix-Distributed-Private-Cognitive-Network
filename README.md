@@ -30,10 +30,19 @@
 
 ## Quick Start
 
-（占位：Month 1 完成后补充本地 Memory 链路的启动方式）
+Month 1 已落地环节：PDF 文本提取。
 
 ```text
 PDF → Parser → Embedding → Graph + Vector → LLM
+      ↑ 已完成（2026-10-07）
+```
+
+运行 PDF 解析器：
+
+```bash
+pip install -r requirements.txt
+python -m pytest tests/unit -q          # 单元测试
+python memory/parser/pdf_parser.py <path-to-pdf>   # 命令行提取
 ```
 
 ## Benchmark
@@ -50,7 +59,9 @@ PDF → Parser → Embedding → Graph + Vector → LLM
 12 个月路线，见规格书第 24 章。当前进度：
 
 - [x] 2026-10-07 初始化仓库与目录骨架
-- [ ] Month 1 Local Cognitive Core
+- [x] 2026-10-07 Month 1 环节 1/6：PDF 文本提取（parser + 11 单测 + 端到端样例）
+- [ ] Month 1 环节 2/6：Chunker（语义切分）
+- [ ] Month 1 Local Cognitive Core 完成（Embedding → Graph+Vector → LLM 引用记忆）
 
 ## 学习执行模式
 

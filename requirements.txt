@@ -1,0 +1,7 @@
+# Python 3.14+
+
+# 依赖（Month 1）
+PyMuPDF>=1.24
+pytest>=8
+
+# 后续阶段将增加：fastapi, psycopg, neo4j, sentence-transformers 等

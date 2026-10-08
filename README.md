@@ -30,19 +30,20 @@
 
 ## Quick Start
 
-Month 1 已落地环节：PDF 文本提取。
+Month 1 已落地环节：PDF 文本提取 + 文本切分。
 
 ```text
-PDF → Parser → Embedding → Graph + Vector → LLM
-      ↑ 已完成（2026-10-07）
+PDF → Parser → Chunker → Embedding → Graph + Vector → LLM
+      ↑ 已完成    ↑ 已完成（2026-10-08）
 ```
 
-运行 PDF 解析器：
+运行：
 
 ```bash
 pip install -r requirements.txt
-python -m pytest tests/unit -q          # 单元测试
+python -m pytest tests/unit -q          # 单元测试（31 个）
 python memory/parser/pdf_parser.py <path-to-pdf>   # 命令行提取
+python memory/parser/chunker.py <path-to-pdf> 512 64   # 提取 + 切分
 ```
 
 ## Benchmark
@@ -60,7 +61,8 @@ python memory/parser/pdf_parser.py <path-to-pdf>   # 命令行提取
 
 - [x] 2026-10-07 初始化仓库与目录骨架
 - [x] 2026-10-07 Month 1 环节 1/6：PDF 文本提取（parser + 11 单测 + 端到端样例）
-- [ ] Month 1 环节 2/6：Chunker（语义切分）
+- [x] 2026-10-08 Month 1 环节 2/6：Chunker 文本切分（固定长度+重叠，20 单测）
+- [ ] Month 1 环节 3/6：Embedding
 - [ ] Month 1 Local Cognitive Core 完成（Embedding → Graph+Vector → LLM 引用记忆）
 
 ## 学习执行模式

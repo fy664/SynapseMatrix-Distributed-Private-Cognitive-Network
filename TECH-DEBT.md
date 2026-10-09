@@ -61,3 +61,35 @@
   `*.obj / *.exe / *.o / *.a`。
 - **Proper Solution**：提交前 `git status` 自查 + pre-commit 钩子过滤构建产物。
 - **Priority**：P3
+
+---
+
+## 6. TF-IDF 无停用词过滤
+
+- **Issue**：分词只过滤标点，"的/了/是"等高频虚词仍进入词表。
+- **Impact**：虚词在所有文档都高频出现，会拉高无关文本的相似度，污染检索结果（P2）。
+- **Temporary Solution**：V1 接受；IDF 已天然压低高频词权重（出现在全部文档的词 IDF=1）。
+- **Proper Solution**：引入中文停用词表（如哈工大停用词表）在 tokenize 后过滤。
+- **Priority**：P2
+
+---
+
+## 7. TF-IDF 无语义理解 + OOV 词忽略
+
+- **Issue**：词面重合模型，"苹果"与"水果"相似度为 0；fit 后出现的新词直接忽略。
+- **Impact**：同义改写类查询检索不到（P1 影响检索正确性）；新词丢失信息（P2）。
+- **Temporary Solution**：V1 接受，作为词面基线。
+- **Proper Solution**：V2 换语义 embedding（BGE 系列），稠密向量天然处理同义词；
+  新词做增量词表更新或直接由模型 OOV 处理。
+- **Priority**：P1
+
+---
+
+## 8. 稀疏向量 dict 表示
+
+- **Issue**：向量用 {词: 权重} dict 存储，检索需全量线性扫描。
+- **Impact**：记忆量达万级 chunk 后检索变慢（P2，性能问题）。
+- **Temporary Solution**：V1 文本量小（<100 chunk），线性扫描足够。
+- **Proper Solution**：V2 换稠密向量 + ANN 索引（如 faiss / hnswlib），
+  或稀疏倒排索引。
+- **Priority**：P2

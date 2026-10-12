@@ -93,3 +93,37 @@
 - **Proper Solution**：V2 换稠密向量 + ANN 索引（如 faiss / hnswlib），
   或稀疏倒排索引。
 - **Priority**：P2
+
+---
+
+## 9. VectorStore 索引只存内存，无持久化
+
+- **Issue**：`memory/retrieval/vector_store.py` 的索引是进程内列表，退出即丢失。
+- **Impact**：重启后需重新解析 + 向量化全部文档（P2，数据不持久）。
+- **Temporary Solution**：V1 接受；每次使用先跑完整 pipeline。
+- **Proper Solution**：V2 接向量数据库（如 sqlite-vec / qdrant / pgvector），
+  或自定义二进制持久化（chunk_id + 向量 + 元数据）。
+- **Priority**：P2
+
+---
+
+## 10. VectorStore 无删除/更新能力
+
+- **Issue**：索引只有 add/search，无 remove/update。
+- **Impact**：文档变更后旧 chunk 无法移除，会产生过期记忆（P2，正确性问题）。
+- **Temporary Solution**：V1 接受；全量重建索引规避。
+- **Proper Solution**：V2 按 chunk_id 支持删除/覆盖，配合 memory versioning
+  （规格书 16.2）做增量更新。
+- **Priority**：P2
+
+---
+
+## 11. 检索无多字段过滤（时间/来源）
+
+- **Issue**：search 只有相似度一个维度，无法按时间范围/来源文档过滤。
+- **Impact**：跨时间认知检索（规格书场景 B）无法实现——"去年的决定"无法限定时间。
+- **Temporary Solution**：V1 接受；检索后在上层做时间过滤（先取相似再筛）。
+- **Proper Solution**：V2 在 VectorStore 增加 metadata 过滤条件
+  （created_at 范围、source_type 等），或由 Memory Score 综合排序
+  （规格书 9.4：Semantic + Recency + Importance + Activation + GraphRelevance）。
+- **Priority**：P1

@@ -127,3 +127,50 @@
   （created_at 范围、source_type 等），或由 Memory Score 综合排序
   （规格书 9.4：Semantic + Recency + Importance + Activation + GraphRelevance）。
 - **Priority**：P1
+
+---
+
+## 12. graph_relevance 用节点度近似，非查询距离
+
+- **Issue**：`MemoryGraph.graph_relevance` 用 degree(node)/max_degree 近似，
+  严格说图相关度应计算"节点到查询实体的距离"。
+- **Impact**：图相关度不感知查询——同一节点对不同 query 相关度相同（P2）。
+- **Temporary Solution**：V1 接受；作为图维度的占位信号。
+- **Proper Solution**：V2 改为 BFS 最短路径倒数（1/distance），
+  查询实体确定后逐节点计算。
+- **Priority**：P2
+
+---
+
+## 13. 图无关系类型/属性/权重
+
+- **Issue**：`MemoryGraph` 只有无向边，规格书 10.2 的 RELATION 类型
+  （MENTIONS/PART_OF/DERIVED_FROM）、节点属性、边权重均未实现。
+- **Impact**："DERIVED_FROM（源于）"这类语义关系无法表达，图谱表达力受限（P2）。
+- **Temporary Solution**：V1 统一按"有边"处理；关系类型留待 V2。
+- **Proper Solution**：V2 升级为有向带权图 + 关系类型枚举，
+  或直接引入 Neo4j（规格书 L4 Memory Fabric 技术栈）。
+- **Priority**：P2
+
+---
+
+## 14. Memory Score 权重未 Benchmark
+
+- **Issue**：默认权重（语义0.5/新近0.2/激活0.15/重要0.1/图0.05）是拍脑袋起点。
+- **Impact**：排序质量未验证，可能劣于纯相似度（P2，正确性待证）。
+- **Temporary Solution**：V1 接受；权重经构造注入可随时调整。
+- **Proper Solution**：规格书 20.2 Memory Benchmark（Recall/Precision/
+  Retrieval Latency）对比 Naive RAG / Vector RAG / Graph RAG / Synapse Memory，
+  用数据调权重。
+- **Priority**：P2
+
+---
+
+## 15. Importance 分量无数据来源
+
+- **Issue**：Memory Score 的 importance 分量在 V1 无输入，全为默认值 0.5。
+- **Impact**：该维度当前不起区分作用（P3）。
+- **Temporary Solution**：V1 接受；接口已预留该字段。
+- **Proper Solution**：V2 由来源类型（用户笔记>网页>聊天）、访问频率、
+  用户显式标记共同驱动 importance。
+- **Priority**：P3

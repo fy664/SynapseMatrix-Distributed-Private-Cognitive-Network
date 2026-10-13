@@ -30,22 +30,24 @@
 
 ## Quick Start
 
-Month 1 已落地环节：PDF 文本提取 + 文本切分 + 向量化 + 检索。
+Month 1 已落地环节：PDF 文本提取 + 文本切分 + 向量化 + 检索 + 综合排序。
 
 ```text
-PDF → Parser → Chunker → Embedding → Retrieval → Graph + Vector → LLM
-      ↑ 已完成    ↑ 已完成    ↑ 已完成    ↑ 已完成（2026-10-12）
+PDF → Parser → Chunker → Embedding → Retrieval → Memory Score → LLM
+      ↑ 已完成    ↑ 已完成    ↑ 已完成    ↑ 已完成    ↑ 已完成（2026-10-13）
 ```
 
 运行：
 
 ```bash
 pip install -r requirements.txt
-python -m pytest tests/unit -q          # 单元测试（64 个）
+python -m pytest tests/unit -q          # 单元测试（108 个）
 python memory/parser/pdf_parser.py <path-to-pdf>   # 命令行提取
 python memory/parser/chunker.py <path-to-pdf> 512 64   # 提取 + 切分
 python memory/embedding/embedder.py '文本A' '文本B'     # 向量化 + 相似度
 python memory/retrieval/vector_store.py '问题' <path-to-pdf> 5   # 索引 + 检索
+python memory/activation/memory_score.py                 # 综合排序演示
+python memory/graph/graph.py                             # 图谱演示
 ```
 
 ## Benchmark
@@ -66,7 +68,8 @@ python memory/retrieval/vector_store.py '问题' <path-to-pdf> 5   # 索引 + �
 - [x] 2026-10-08 Month 1 环节 2/6：Chunker 文本切分（固定长度+重叠，20 单测）
 - [x] 2026-10-09 Month 1 环节 3/6：Embedding 向量化（手写 TF-IDF + 余弦，19 单测）
 - [x] 2026-10-12 Month 1 环节 4/6：Retrieval 检索（暴力扫描+堆取 top-k，14 单测）
-- [ ] Month 1 环节 5/6：Memory Score 与图谱（Graph）
+- [x] 2026-10-13 Month 1 环节 5/6：Memory Score 与图谱（衰减+加权+邻接表，44 单测）
+- [ ] Month 1 环节 6/6：Pipeline 编排 + Memory 持久化
 - [ ] Month 1 Local Cognitive Core 完成（Embedding → Graph+Vector → LLM 引用记忆）
 
 ## 学习执行模式

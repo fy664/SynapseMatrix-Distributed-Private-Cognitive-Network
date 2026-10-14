@@ -12,9 +12,15 @@ SynapseMatrix — Memory Embedding 层：统一 Embedder 接口（Month 1 环节
 
 本模块提供：
     - Embedder：统一入口（默认 TfidfVectorizer，保留后端切换点）
+    - save / load：模型持久化（Month 1 环节 6/6 新增）
+      向量空间 = 词典 + IDF + 文档数，三者缺一不可：
+      不存词典，下次 encode 时无法还原同一向量空间，检索必然失配。
 """
 
 from __future__ import annotations
+
+import json
+from pathlib import Path
 
 from memory.embedding.tfidf import TfidfVectorizer, cosine_similarity
 
@@ -28,6 +34,10 @@ class Embedder:
         v = emb.encode("一段文本")       # 单文本 -> 稀疏向量
         vs = emb.encode_all(texts)      # 批量
         score = emb.similarity(v, other)
+
+        # 持久化（6/6 新增）
+        emb.save("data/embedder.json")  # 存模型（词典+IDF+文档数）
+        emb2 = Embedder().load("data/embedder.json")  # 重启后还原
     """
 
     def __init__(self) -> None:
@@ -52,6 +62,57 @@ class Embedder:
     def similarity(self, a: dict[str, float], b: dict[str, float]) -> float:
         """两个向量的余弦相似度。"""
         return cosine_similarity(a, b)
+
+    # ------------------------------------------------------------------
+    # 模型持久化（Month 1 环节 6/6）
+    # ------------------------------------------------------------------
+
+    def save(self, path: str | Path) -> None:
+        """把向量化模型（词典/IDF/文档数）写入 JSON。
+
+        为什么必须存这三样：
+            - vocabulary_：词 -> 下标的映射（V1 稀疏表示可不用下标，保留对齐）
+            - idf_       ：每个词的逆文档频率（权重计算的依据）
+            - n_docs_    ：fit 时的文档总数（IDF 公式的分母来源）
+        三者共同定义"向量空间"；缺任一，加载后 encode 结果都与原空间不一致。
+        """
+        backend = self._backend
+        payload = {
+            "type": "tfidf",
+            "vocabulary": backend.vocabulary_,
+            "idf": backend.idf_,
+            "n_docs": backend.n_docs_,
+        }
+        p = Path(path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        # ensure_ascii=False：中文词典以明文存储（可读、可 diff）
+        p.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def load(self, path: str | Path) -> "Embedder":
+        """从 JSON 加载向量化模型并还原后端（自返回，支持链式）。
+
+        抛错：
+            FileNotFoundError：模型文件不存在（首次使用应先 fit 再 save）
+            ValueError       ：文件类型不是 tfidf（如误传记忆库文件）
+        """
+        p = Path(path)
+        if not p.exists():
+            raise FileNotFoundError(f"模型文件不存在: {p}")
+
+        payload = json.loads(p.read_text(encoding="utf-8"))
+        if payload.get("type") != "tfidf":
+            raise ValueError(f"不支持的模型类型: {payload.get('type')}")
+
+        backend = TfidfVectorizer()
+        backend.vocabulary_ = dict(payload["vocabulary"])
+        backend.idf_ = {str(k): float(v) for k, v in payload["idf"].items()}
+        backend.n_docs_ = int(payload["n_docs"])
+        self._backend = backend
+        return self
+
+    def is_fitted(self) -> bool:
+        """是否已完成 fit/load（有词典）。pipeline 据此决定跳过训练。"""
+        return bool(self._backend.vocabulary_)
 
 
 if __name__ == "__main__":

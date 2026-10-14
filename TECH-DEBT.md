@@ -174,3 +174,39 @@
 - **Proper Solution**：V2 由来源类型（用户笔记>网页>聊天）、访问频率、
   用户显式标记共同驱动 importance。
 - **Priority**：P3
+
+---
+
+## 16. Embedding 词典不增量更新（新词丢失）
+
+- **Issue**：pipeline 导入新文档时，向量化模型沿用旧词典（fit 一次），
+  新文档中出现的新词在 encode 时被忽略。
+- **Impact**：新文档的专属词汇无向量权重，检索召回下降（P2）。
+- **Temporary Solution**：V1 接受；force 重建时全量重新 fit。
+- **Proper Solution**：V2 换 BGE 等预训练语义模型——词典固定、OOV 天然解决；
+  若保留 TF-IDF，则实现增量 IDF 更新（需记录每词的 df 计数）。
+- **Priority**：P2
+
+---
+
+## 17. search 的 activation 分量用 recency 近似
+
+- **Issue**：pipeline.search 组装 Memory Score 时，
+  activation 直接取 recency 值，没有独立的访问计数。
+- **Impact**：激活度不反映真实访问频率——常访问的记忆与刚创建的记忆
+  无法区分（P2）。
+- **Temporary Solution**：V1 接受；接口已预留。
+- **Proper Solution**：V2 在 MemoryRecord 增加访问计数器 access_count，
+  检索命中时 reinforce()（衰减 + 强化闭环，规格书 9.5）。
+- **Priority**：P2
+
+---
+
+## 18. JSON 全量读写，记忆量大后变慢
+
+- **Issue**：MemoryStore 每次 save/load 读写整个 JSON 文件。
+- **Impact**：万级 chunk 后落盘/加载延迟明显（P2，性能问题）。
+- **Temporary Solution**：V1 接受（当前 <100 chunk）。
+- **Proper Solution**：V2 换 SQLite（向量存 BLOB 或稀疏表示）
+  或专用向量库（qdrant/pgvector，规格书 L5 技术栈）。
+- **Priority**：P2

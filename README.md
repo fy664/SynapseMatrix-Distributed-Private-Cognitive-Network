@@ -30,18 +30,22 @@
 
 ## Quick Start
 
-Month 1 Local Cognitive Core 已收官：PDF 文本提取 + 切分 + 向量化 + 检索 + 综合排序 + 编排持久化。
+Month 1 Local Cognitive Core 已收官（解析→切分→向量化→检索→排序→持久化）。
+Month 2 网络层起步：TCP 回显链路已通。
 
 ```text
+本地核心（已完成 2026-10-14）：
 PDF → Parser → Chunker → Embedding → Retrieval → Memory Score → Memory Store → LLM
-      ↑ 已完成    ↑ 已完成    ↑ 已完成    ↑ 已完成    ↑ 已完成    ↑ 已完成（2026-10-14）
+
+网络层（起步 2026-10-15）：
+设备A ←— TCP 回显 —→ 设备B   （跨进程传数据的最小路径）
 ```
 
 运行：
 
 ```bash
 pip install -r requirements.txt
-python -m pytest tests/unit -q          # 单元测试（129 个）
+python -m pytest tests/unit -q          # 单元测试（135 个）
 python memory/parser/pdf_parser.py <path-to-pdf>   # 命令行提取
 python memory/parser/chunker.py <path-to-pdf> 512 64   # 提取 + 切分
 python memory/embedding/embedder.py '文本A' '文本B'     # 向量化 + 相似度
@@ -49,6 +53,10 @@ python memory/retrieval/vector_store.py '问题' <path-to-pdf> 5   # 索引 + �
 python memory/activation/memory_score.py                 # 综合排序演示
 python memory/graph/graph.py                             # 图谱演示
 python memory/pipeline.py <path-to-pdf> '问题'          # 一键导入 + 检索（持久化）
+
+# 网络回显（两个终端）：
+python -m net.echo_server --port 9000                   # 终端1：服务端
+python -m net.echo_client "你好" --port 9000            # 终端2：客户端
 ```
 
 ## Benchmark
@@ -72,6 +80,8 @@ python memory/pipeline.py <path-to-pdf> '问题'          # 一键导入 + 检�
 - [x] 2026-10-13 Month 1 环节 5/6：Memory Score 与图谱（衰减+加权+邻接表，44 单测）
 - [x] 2026-10-14 Month 1 环节 6/6：Pipeline 编排 + Memory 持久化（JSON 双落盘，21 单测）
 - [x] Month 1 Local Cognitive Core 完成（解析→切分→向量化→检索→排序→持久化，129 单测全过）
+- [x] 2026-10-15 Month 2 环节 1：TCP 回显链路（echo server/client + 6 单测，135 全过）
+- [ ] Month 2 环节 2：同步协议 v1（帧格式 + 增量同步 + 冲突处理）
 - [ ] Month 2：网络基础 + P2P 同步协议起步
 
 ## 学习执行模式

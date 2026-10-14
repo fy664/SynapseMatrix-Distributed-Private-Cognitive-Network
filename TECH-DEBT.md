@@ -210,3 +210,38 @@
 - **Proper Solution**：V2 换 SQLite（向量存 BLOB 或稀疏表示）
   或专用向量库（qdrant/pgvector，规格书 L5 技术栈）。
 - **Priority**：P2
+
+---
+
+## 19. 消息无帧边界（粘包未解）
+
+- **Issue**：echo 链路 recv 循环以"已知长度"收满，是回显场景特例；
+  真实同步消息长度未知，一次 recv 无法确定一条消息的边界。
+- **Impact**：多消息连续发送时无法区分边界——同步协议不可实现（P1）。
+- **Temporary Solution**：V1 echo 场景用 expected=len(payload) 收满。
+- **Proper Solution**：V2 同步协议引入"长度前缀"帧格式
+  （4 字节大端长度 + payload），recv 先读 4 字节得长度，再收满。
+- **Priority**：P1
+
+---
+
+## 20. 无 send_all 封装
+
+- **Issue**：send 不保证一次写完（大消息可能部分发送），
+  echo_server 靠 sendall（Python 内置封装）规避；C++ 版需自行实现。
+- **Impact**：C++ 端侧实现时若直接 send 会丢数据（P1，正确性）。
+- **Temporary Solution**：Python 用 socket.sendall。
+- **Proper Solution**：同步协议环节封装 send_all（循环 send 直至全部写完，
+  检查返回值累加偏移）。
+- **Priority**：P1
+
+---
+
+## 21. 线程模型为 V1 妥协
+
+- **Issue**：echo_server 用 ThreadPoolExecutor 每连接一线程。
+- **Impact**：连接数上升时线程切换/GIL 开销明显；C++ 端不适合（P2）。
+- **Temporary Solution**：V1 接受（个人端侧并发 <8）。
+- **Proper Solution**：V2 换 selectors 事件循环；规格书 L4 端侧 C++
+  用 epoll（非阻塞 + 事件驱动）。
+- **Priority**：P2

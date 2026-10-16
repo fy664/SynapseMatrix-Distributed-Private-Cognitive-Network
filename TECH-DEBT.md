@@ -245,3 +245,51 @@
 - **Proper Solution**：V2 换 selectors 事件循环；规格书 L4 端侧 C++
   用 epoll（非阻塞 + 事件驱动）。
 - **Priority**：P2
+
+---
+
+## 22. 同步仍在本进程内对账，未接真实 socket
+
+- **Issue**：`MemorySync.sync_all` 直接读对方 store 对象，
+  没有走 TCP + 帧传输。
+- **Impact**：跨机器同步不可用——当前仅验证语义（P1，功能缺口）。
+- **Temporary Solution**：V1 进程内直调（语义正确）。
+- **Proper Solution**：下一环节接入——SYNC 帧过线、对端 apply 后回
+  ACK、断线重试（离线补收，规格书 5.2）。
+- **Priority**：P1
+
+---
+
+## 23. 冲突仅后写者胜，时间戳相同时静默
+
+- **Issue**：同身份不同文本且 created_at 完全相等时，
+  _sync_direction 走 skipped（保留 target），无告警。
+- **Impact**：真正的双写冲突可能静默丢一方（P2，正确性风险）。
+- **Temporary Solution**：V1 接受（created_at 精确到微秒，概率极低）。
+- **Proper Solution**：V2 引入向量合并策略（规格书 5.2）
+  或至少记录冲突日志供人工裁决。
+- **Priority**：P2
+
+---
+
+## 24. 身份用 (source, chunk_id) 复合键，非 UUID
+
+- **Issue**：跨设备身份依赖 source 字符串（文档名）+ 源内编号，
+  文档重命名后身份漂移；两台设备对同一文档的导入路径不同时
+  source 不一致。
+- **Impact**：同一批记忆在不同设备可能被识别为不同身份（P2）。
+- **Temporary Solution**：V1 接受（个人场景 source 约定一致）。
+- **Proper Solution**：V2 每条记忆分配 UUID（创建时生成），
+  identity 直接为 UUID，与来源解耦。
+- **Priority**：P2
+
+---
+
+## 25. created_at 兼作"更新时间"，语义不纯
+
+- **Issue**：冲突 updated 时改写 created_at——"创建时间"与
+  "更新时间"混淆。
+- **Impact**：跨设备时间语义不一致，后续排序/衰减计算可能偏差（P3）。
+- **Temporary Solution**：V1 接受（更新场景少）。
+- **Proper Solution**：V2 增加 updated_at 字段，created_at 只写一次。
+- **Priority**：P3

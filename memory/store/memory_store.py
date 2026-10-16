@@ -48,12 +48,20 @@ class MemoryRecord:
     """一条持久化的记忆记录。
 
     属性说明：
-        chunk_id : 全局唯一编号（由 MemoryStore 分配，跨文档递增）
-        page_no  : 来源页码（回溯原文用）
-        text     : chunk 原文
-        vector   : TF-IDF 稀疏向量 {词: 权重}（JSON 可直接存）
-        created_at: 创建时间（ISO 字符串）
-        source   : 文档来源标识（如文件名），用于幂等判断
+        chunk_id      : 本地唯一编号（由 MemoryStore 分配，跨文档递增）
+        page_no       : 来源页码（回溯原文用）
+        text          : chunk 原文
+        vector        : TF-IDF 稀疏向量 {词: 权重}（JSON 可直接存）
+        created_at    : 创建时间（ISO 字符串）
+        source        : 文档来源标识（如文件名），用于幂等判断
+        source_chunk_id: 源文档/远端设备内的编号（跨设备身份用）。
+                        本地创建时为 None（身份回退到 chunk_id）；
+                        同步应用时保留远端编号——两台设备各自的
+                        chunk_id 都从 1 开始，不能直接互认。
+
+    身份（跨设备对账的键）：
+        identity = (source, source_chunk_id if set else chunk_id)
+        两台设备同一条记忆必须算出相同 identity，同步才正确。
     """
 
     chunk_id: int
@@ -62,6 +70,13 @@ class MemoryRecord:
     vector: dict[str, float]
     created_at: str
     source: str
+    source_chunk_id: int | None = None
+
+    @property
+    def identity(self) -> tuple[str, int]:
+        """跨设备身份：(源文档, 源内编号)。"""
+        cid = self.source_chunk_id if self.source_chunk_id is not None else self.chunk_id
+        return (self.source, cid)
 
 
 class MemoryStore:
@@ -125,6 +140,43 @@ class MemoryStore:
         self._next_chunk_id += 1
         return record
 
+    def add_remote_record(
+        self,
+        source: str,
+        source_chunk_id: int,
+        page_no: int,
+        text: str,
+        vector: dict[str, float],
+        created_at: str,
+    ) -> MemoryRecord:
+        """同步专用：插入一条远端记录，保留远端身份。
+
+        与 add_record 的区别：
+            - 本地 chunk_id 仍自动分配（本地唯一性不破坏）
+            - source_chunk_id 存远端编号，身份 = (source, source_chunk_id)
+              与远端设备对同一记忆算出的身份一致
+
+        参数：
+            source        : 远端来源文档标识
+            source_chunk_id: 远端设备内的编号
+            page_no/text/vector/created_at: 记录内容与远端时间戳
+
+        返回：
+            新插入的 MemoryRecord
+        """
+        record = MemoryRecord(
+            chunk_id=self._next_chunk_id,
+            page_no=page_no,
+            text=text,
+            vector=vector,
+            created_at=created_at,
+            source=source,
+            source_chunk_id=source_chunk_id,
+        )
+        self._records.append(record)
+        self._next_chunk_id += 1
+        return record
+
     def has_source(self, source: str) -> bool:
         """该来源是否已导入过（幂等判断）。"""
         return any(r.source == source for r in self._records)
@@ -139,6 +191,38 @@ class MemoryStore:
         removed = len(self._records) - len(kept)
         self._records = kept
         return removed
+
+    def update_record(
+        self,
+        source: str,
+        source_chunk_id: int,
+        text: str,
+        vector: dict[str, float],
+        created_at: str | None = None,
+    ) -> bool:
+        """按跨设备身份 (source, source_chunk_id) 更新单条记录的内容。
+
+        用途：同步冲突处理（后写者胜）——远端版本更新时，
+        只替换这一条，不动同源其他记录（delete_by_source 会误删）。
+
+        参数：
+            source        : 源文档标识
+            source_chunk_id: 源内编号（身份键，可能非本地 chunk_id）
+            text          : 新文本
+            vector        : 新向量
+            created_at    : 新创建时间（可选；None 时保留原时间戳）
+
+        返回：
+            True  = 找到并更新；False = 无此身份（调用方应先判断）
+        """
+        for r in self._records:
+            if r.identity == (source, source_chunk_id):
+                r.text = text
+                r.vector = vector
+                if created_at is not None:
+                    r.created_at = created_at
+                return True
+        return False
 
     # ------------------------------------------------------------------
     # 读取

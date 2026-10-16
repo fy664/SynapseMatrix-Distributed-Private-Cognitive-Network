@@ -31,21 +31,22 @@
 ## Quick Start
 
 Month 1 Local Cognitive Core 已收官（解析→切分→向量化→检索→排序→持久化）。
-Month 2 网络层起步：TCP 回显链路已通。
+Month 2 网络层：TCP 回显 + 同步协议 v1 已落地。
 
 ```text
 本地核心（已完成 2026-10-14）：
 PDF → Parser → Chunker → Embedding → Retrieval → Memory Score → Memory Store → LLM
 
-网络层（起步 2026-10-15）：
-设备A ←— TCP 回显 —→ 设备B   （跨进程传数据的最小路径）
+网络层（2026-10-15~16）：
+设备A ←— TCP 回显 —→ 设备B        （跨进程传字节）
+设备A ←— 同步协议v1 —→ 设备B      （长度前缀帧 + 增量差集 + 后写者胜）
 ```
 
 运行：
 
 ```bash
 pip install -r requirements.txt
-python -m pytest tests/unit -q          # 单元测试（135 个）
+python -m pytest tests/unit -q          # 单元测试（156 个）
 python memory/parser/pdf_parser.py <path-to-pdf>   # 命令行提取
 python memory/parser/chunker.py <path-to-pdf> 512 64   # 提取 + 切分
 python memory/embedding/embedder.py '文本A' '文本B'     # 向量化 + 相似度
@@ -57,6 +58,9 @@ python memory/pipeline.py <path-to-pdf> '问题'          # 一键导入 + 检�
 # 网络回显（两个终端）：
 python -m net.echo_server --port 9000                   # 终端1：服务端
 python -m net.echo_client "你好" --port 9000            # 终端2：客户端
+
+# 同步协议（进程内演示）：
+python -m net.sync                                       # 双向差集同步演示
 ```
 
 ## Benchmark
@@ -81,7 +85,8 @@ python -m net.echo_client "你好" --port 9000            # 终端2：客户端
 - [x] 2026-10-14 Month 1 环节 6/6：Pipeline 编排 + Memory 持久化（JSON 双落盘，21 单测）
 - [x] Month 1 Local Cognitive Core 完成（解析→切分→向量化→检索→排序→持久化，129 单测全过）
 - [x] 2026-10-15 Month 2 环节 1：TCP 回显链路（echo server/client + 6 单测，135 全过）
-- [ ] Month 2 环节 2：同步协议 v1（帧格式 + 增量同步 + 冲突处理）
+- [x] 2026-10-16 Month 2 环节 2：同步协议 v1（长度前缀帧 + 增量差集 + 冲突处理，21 单测，156 全过）
+- [ ] Month 2 环节 3：同步上 TCP（SYNC 帧过线 + ACK 确认 + 断线重试）
 - [ ] Month 2：网络基础 + P2P 同步协议起步
 
 ## 学习执行模式

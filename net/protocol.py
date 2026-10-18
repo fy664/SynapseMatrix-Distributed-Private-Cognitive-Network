@@ -40,9 +40,12 @@ FRAME_HEADER_BYTES = 4
 MAX_PAYLOAD_BYTES = 64 * 1024
 
 # 消息类型（协议 v1 枚举）
-MSG_SYNC = "SYNC"   # 同步请求：携带记忆记录（增量差集）
-MSG_ACK = "ACK"     # 确认：对端已应用某批记录
-MSG_BYE = "BYE"     # 会话结束（可选，V1 用连接关闭代替）
+MSG_SYNC = "SYNC"       # 同步请求：携带记忆记录（增量差集）
+MSG_ACK = "ACK"         # 确认：对端已应用某批记录
+MSG_BYE = "BYE"         # 会话结束（可选，V1 用连接关闭代替）
+MSG_IDS = "SYNC_IDS"    # 身份对账：携带一方的全部 identity 列表
+MSG_RECORDS = "SYNC_RECORDS"  # 记录传输：携带单条记忆记录
+MSG_ACK_STATS = "SYNC_ACK"    # 带统计的确认：added/updated/skipped 计数
 
 
 def encode_frame(payload: dict) -> bytes:

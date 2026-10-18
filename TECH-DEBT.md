@@ -293,3 +293,45 @@
 - **Temporary Solution**：V1 接受（更新场景少）。
 - **Proper Solution**：V2 增加 updated_at 字段，created_at 只写一次。
 - **Priority**：P3
+
+---
+
+## 26. 测试基建：单连接服务端线程不 join、端口用完即弃
+
+- **Issue**：test_sync_tcp 的 _start_server 每测试起一个
+  daemon 线程 + 随机端口，线程不 join（靠 daemon 终止），
+  socket 用完即 close。
+- **Impact**：测试间无显式同步；本环境曾出现闭包引用 socket
+  句柄失效（WinError 10038）导致间歇失败（P2，测试可靠性）。
+- **Temporary Solution**：线程回调用参数传 socket 对象（不用闭包）；
+  每测试独立 tmp_path 与随机端口。
+- **Proper Solution**：V2 用 pytest fixture 提供"生命周期可控的
+  服务端"（start -> yield -> stop 并 join）；或改用 asyncio/多进程
+  隔离网络测试。
+- **Priority**：P2
+
+---
+
+## 27. ACK 等待无超时（服务端）
+
+- **Issue**：服务端 handle_connection 在等客户端 ACK 时
+  recv 无超时，客户端若静默消失，服务端线程永久阻塞。
+- **Impact**：僵尸线程堆积（P2，资源泄漏）。
+- **Temporary Solution**：V1 依赖客户端超时后主动断开，
+  服务端 recv 到 b'' 抛 ConnectionError 退出。
+- **Proper Solution**：V2 服务端 recv 设置 socket 超时
+  （如 30s），超时即判定会话失败并关闭连接。
+- **Priority**：P2
+
+---
+
+## 28. recv 读块 64KB 与 MAX_PAYLOAD 的关系未显式对齐
+
+- **Issue**：_recv_one 每次 recv(64*1024)，与协议
+  MAX_PAYLOAD_BYTES=64*1024 数值相等但无常量关联。
+- **Impact**：若未来调大 MAX_PAYLOAD，recv 块小于单帧
+  时仍正确（FrameDecoder 半包累积），但数值耦合不显式（P3）。
+- **Temporary Solution**：V1 两者相等，无实际影响。
+- **Proper Solution**：定义 READ_CHUNK_BYTES = MAX_PAYLOAD_BYTES
+  并注释关联；或 recv 用更大读块减少系统调用。
+- **Priority**：P3

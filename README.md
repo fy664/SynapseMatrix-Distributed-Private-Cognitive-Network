@@ -31,7 +31,8 @@
 ## Quick Start
 
 Month 1 Local Cognitive Core 已收官（解析→切分→向量化→检索→排序→持久化）。
-Month 2 网络层：TCP 回显 + 同步协议 v1 + 同步上 TCP 已落地。
+Month 2 网络层：TCP 回显 + 同步协议 v1 + 同步上 TCP 已落地；
+Memory Benchmark（Vector RAG vs Synapse Memory）已通过验收。
 
 ```text
 本地核心（已完成 2026-10-14）：
@@ -41,13 +42,16 @@ PDF → Parser → Chunker → Embedding → Retrieval → Memory Score → Memo
 设备A ←— TCP 回显 —→ 设备B        （跨进程传字节）
 设备A ←— 同步协议v1 —→ 设备B      （长度前缀帧 + 增量差集 + 后写者胜）
 设备A ←— 同步上TCP —→ 设备B      （7 步对账时序 + ACK 确认 + 断线重试）
+
+记忆层验收（2026-10-20）：
+Vector RAG ←— Benchmark —→ Synapse Memory（Temporal Retrieval + 5 指标对比）
 ```
 
 运行：
 
 ```bash
 pip install -r requirements.txt
-python -m pytest tests/unit -q          # 单元测试（161 个）
+python -m pytest tests/unit -q          # 单元测试（168 个）
 python memory/parser/pdf_parser.py <path-to-pdf>   # 命令行提取
 python memory/parser/chunker.py <path-to-pdf> 512 64   # 提取 + 切分
 python memory/embedding/embedder.py '文本A' '文本B'     # 向量化 + 相似度
@@ -66,14 +70,15 @@ python -m net.sync                                       # 双向差集同步演
 # 同步上 TCP（两个终端，真实网络同步）：
 python -m net.sync_server --port 9001 --store data/device_b.json   # 终端1：服务端（设备B）
 python -m net.sync_client --port 9001 --store data/device_a.json  # 终端2：客户端（设备A）
+
+# Memory Benchmark（Vector RAG vs Synapse Memory，Month 2 验收）：
+python benchmarks/memory/run_benchmark.py
 ```
 
 ## Benchmark
 
-（占位：见 docs/benchmark/ 与 benchmarks/）
-
 - Inference: TTFT / Token/s / VRAM
-- Memory: Recall / Precision / Retrieval Latency
+- Memory: **Vector RAG vs Synapse Memory**（`benchmarks/memory/run_benchmark.py`，Recall/Precision/MRR/Top-1，详见 `docs/research/memory-benchmark.md`）
 - Scheduler: Throughput / P95 Latency / Task Completion Rate
 - Sync: Sync Time / Transferred Bytes / Conflict Count
 
@@ -92,7 +97,8 @@ python -m net.sync_client --port 9001 --store data/device_a.json  # 终端2：�
 - [x] 2026-10-15 Month 2 环节 1：TCP 回显链路（echo server/client + 6 单测，135 全过）
 - [x] 2026-10-16 Month 2 环节 2：同步协议 v1（长度前缀帧 + 增量差集 + 冲突处理，21 单测，156 全过）
 - [x] 2026-10-18 Month 2 环节 3：同步上 TCP（7 步对账时序 + ACK 确认 + 断线重试，5 单测，161 全过）
-- [ ] Month 2：网络基础 + P2P 同步协议起步
+- [x] 2026-10-20 Month 2 验收：Temporal Retrieval + Vector RAG vs Synapse Memory Benchmark（since 时间窗 + 5 指标对比，7 单测，168 全过）
+- [x] Month 2：网络基础 + P2P 同步协议 + Memory Benchmark 验收完成
 
 ## 学习执行模式
 

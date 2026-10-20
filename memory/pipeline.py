@@ -235,8 +235,9 @@ class MemoryPipeline:
         min_score: float = 0.05,
         use_memory_score: bool = True,
         weights: MemoryScoreWeights | None = None,
+        since: str | None = None,
     ) -> list[RankedHit]:
-        """检索 + 可选 Memory Score 综合排序。
+        """检索 + 可选 Memory Score 综合排序（Temporal Retrieval）。
 
         参数：
             query            : 查询文本
@@ -245,15 +246,40 @@ class MemoryPipeline:
             use_memory_score : True 时用五维综合排序（默认），
                                False 时退回纯相似度（对照实验用）
             weights          : Memory Score 权重（None = 默认权重）
+            since            : ISO 时间字符串（含时区）。非空时只检索
+                               created_at >= since 的记忆——时间窗过滤，
+                               "不检索 30 天前的记忆"这类需求直接可表达。
+                               默认 None = 全量检索。
 
         返回：
             RankedHit 列表，按分数降序
+
+        时间维度（Temporal Retrieval）的两层语义：
+            1. 过滤层（since）：显式时间窗，硬性排除窗口外记忆
+               ——对应规格书"只查最近 N 天的记忆"场景
+            2. 排序层（recency）：Memory Score 的新近度分量按
+               created_at 衰减，新记忆天然压过旧记忆
+               ——对应规格书 9.4 Memory Score 的 Recency 项
         """
         store, embedder = self._load()
         vs = self.rebuild_index(store, embedder, min_score=min_score)
 
         qvec = embedder.encode(query)
         hits: list[RetrievalHit] = vs.search(qvec, top_k=top_k * 3)  # 取多，排序中筛
+
+        # chunk_id -> 记录映射（一次构建，过滤与打分共用）
+        record_by_id = {r.chunk_id: r for r in store}
+
+        # 时间窗过滤（Temporal Retrieval 过滤层）：按 created_at 硬性排除
+        if since is not None:
+            since_dt = datetime.fromisoformat(since)
+            hits = [
+                h
+                for h in hits
+                if h.chunk_id in record_by_id
+                and datetime.fromisoformat(record_by_id[h.chunk_id].created_at)
+                >= since_dt
+            ]
 
         if not use_memory_score:
             # 对照模式：退回纯向量相似度排序（原样返回，不计算 Memory Score）
@@ -275,8 +301,8 @@ class MemoryPipeline:
         scored: list[ScoredMemory] = []
         recency_map: dict[int, float] = {}
         for h in hits:
-            # 从记忆库找回该 chunk 的 created_at
-            record = next((r for r in store if r.chunk_id == h.chunk_id), None)
+            # 从记录映射找回该 chunk 的 created_at（时间感知检索的数据源）
+            record = record_by_id.get(h.chunk_id)
             recency = 0.0
             if record is not None:
                 created = datetime.fromisoformat(record.created_at)

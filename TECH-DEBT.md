@@ -161,7 +161,11 @@
 - **Temporary Solution**：V1 接受；权重经构造注入可随时调整。
 - **Proper Solution**：规格书 20.2 Memory Benchmark（Recall/Precision/
   Retrieval Latency）对比 Naive RAG / Vector RAG / Graph RAG / Synapse Memory，
-  用数据调权重。
+  用数据调权重。**2026-10-20 进展**：Vector RAG vs Synapse Memory 基准
+  已落地（`benchmarks/memory/run_benchmark.py`，12 问 / Recall / Precision /
+  MRR / Top-1），结论：无时间差异时两套等价；新旧冲突时 Synapse Memory
+  明确偏向新记忆（Top-1 新记忆 9/12 vs 4/12）。下一步用同一基准网格调权
+  重。
 - **Priority**：P2
 
 ---
@@ -334,4 +338,34 @@
 - **Temporary Solution**：V1 两者相等，无实际影响。
 - **Proper Solution**：定义 READ_CHUNK_BYTES = MAX_PAYLOAD_BYTES
   并注释关联；或 recv 用更大读块减少系统调用。
+- **Priority**：P3
+
+---
+
+## 29. Benchmark ground truth 用关键词定位，非人工标注
+
+- **Issue**：`run_benchmark.py` 的 ground truth 是"chunk 文本包含
+  概念词即相关"（如 'Memory Score'），不是人工逐条标注相关性。
+- **Impact**：Recall/Precision 绝对数值偏乐观（关键词命中天然
+  与 TF-IDF 检索同源），相对对比（RAG vs Synapse）仍有效（P2）。
+- **Temporary Solution**：V1 接受；12 问全命中，结论聚焦时间
+  维度的相对差异。
+- **Proper Solution**：V2 引入人工标注的相关性集合（或 LLM 辅助
+  标注 + 人工抽验），并对同义改写做查询扩充测试；语料换成真实
+  个人记忆分布（聊天/笔记/网页），而非规格书本身。
+- **Priority**：P2
+
+---
+
+## 30. spec_full.pdf 语料是规格书转印，非自然排版
+
+- **Issue**：Benchmark 语料由完整规格书 MD 直接转 PDF
+  （`benchmarks/memory/spec_full.pdf`，66 页，每页 45 行等宽文本），
+  不是真实文档排版（无标题层级/表格/图片/多栏）。
+- **Impact**：chunk 分布与真实 PDF 不同（页内文本密度均匀），
+  检索难度的代表性有限（P3）。
+- **Temporary Solution**：V1 接受；规格书概念密度高，关键词命中
+  充分，足够支撑"时间感知"对比。
+- **Proper Solution**：V2 用真实多主题语料（混合笔记/网页/论文），
+  或至少混合多个来源 PDF。
 - **Priority**：P3

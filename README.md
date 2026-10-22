@@ -85,7 +85,8 @@ cmd /c build_runtime.bat                  # 一键：vcvars64 + configure + buil
 runtime/build/Release/test_queue.exe      # 单测：线程安全队列（5 用例）
 runtime/build/Release/test_task.exe       # 单测：Task（4 用例）
 runtime/build/Release/test_executor.exe   # 单测：Executor 线程池（5 用例）
-runtime/build/Release/demo_threadpool.exe # 演示：4 worker 并发执行 10 任务
+runtime/build/Release/test_telemetry.exe  # 单测：Telemetry 深化（7 用例）
+runtime/build/Release/demo_threadpool.exe # 演示：4 worker 并发执行 10 任务 + 统计
 ```
 
 ## Benchmark
@@ -114,7 +115,8 @@ runtime/build/Release/demo_threadpool.exe # 演示：4 worker 并发执行 10 �
 - [x] Month 2：网络基础 + P2P 同步协议 + Memory Benchmark 验收完成
 - [x] 2026-10-21 Month 3 环节 1：C++ Runtime 起步（CMake 工程 + 自研测试框架 + Task/线程安全 Queue + demo，9 单测全过，构建脚本可复现）
 - [x] 2026-10-22 Month 3 环节 2：Worker + Executor 实现（多线程 Task Runtime 核心：优雅停机/幂等 join/RAII 析构，+5 单测，14 全过，CTest 3/3）
-- [ ] Month 3：Device/Telemetry 深化 + 优先级调度（V2）
+- [x] 2026-10-22 Month 3 环节 3：Telemetry 深化（per-worker 独立计数 + 拒绝计数 + 耗时统计，+7 单测，21 全过，CTest 4/4）
+- [ ] Month 3：优先级调度（Task Priority → 优先队列，408 优先级调度 PS）
 
 ## 学习执行模式
 

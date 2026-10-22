@@ -26,7 +26,9 @@
 
 namespace synapse::runtime {
 
-Executor::Executor(std::size_t num_workers) : num_workers_(num_workers) {
+Executor::Executor(std::size_t num_workers)
+    : telemetry_(num_workers),      // Telemetry 定大小（每 worker 一格）
+      num_workers_(num_workers) {
     // 预分配指针数组：unique_ptr 移动便宜，容量不足时只搬指针
     workers_.reserve(num_workers);
     for (std::size_t i = 0; i < num_workers; ++i) {
@@ -43,7 +45,11 @@ Executor::~Executor() {
 
 bool Executor::submit(Task task) {
     // 转发给队列；队列已关闭（shutdown 后）push 返回 false
-    return queue_.push(std::move(task));
+    const bool accepted = queue_.push(std::move(task));
+    if (!accepted) {
+        telemetry_.record_rejected();  // 被拒计数（可观测性）
+    }
+    return accepted;
 }
 
 void Executor::shutdown() {

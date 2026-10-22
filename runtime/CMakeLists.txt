@@ -52,6 +52,11 @@ add_executable(test_executor core/tests/test_executor.cpp)
 target_link_libraries(test_executor PRIVATE synapse_core)
 add_test(NAME test_executor COMMAND test_executor)
 
+# 单测：Telemetry 深化（Month 3 环节 3）
+add_executable(test_telemetry core/tests/test_telemetry.cpp)
+target_link_libraries(test_telemetry PRIVATE synapse_core)
+add_test(NAME test_telemetry COMMAND test_telemetry)
+
 # 演示：Executor 驱动的多线程 Task Runtime
 add_executable(demo_threadpool core/tests/demo_threadpool.cpp)
 target_link_libraries(demo_threadpool PRIVATE synapse_core)

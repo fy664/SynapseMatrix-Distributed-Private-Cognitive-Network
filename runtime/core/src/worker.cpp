@@ -17,6 +17,8 @@
 
 #include "runtime/worker.hpp"
 
+#include <chrono>  // steady_clock：测任务执行耗时（单调时钟）
+
 namespace synapse::runtime {
 
 Worker::Worker(int worker_id, TaskQueue& queue, Telemetry& telemetry)
@@ -44,8 +46,14 @@ void Worker::run() {
     // 主循环：阻塞取任务；队列 close 且清空后 pop 返回 nullopt → 退出
     // 这就是"优雅停止"——不打断正在执行的任务，干完手里的活再下班。
     while (auto task = queue_.pop()) {
+        // 用单调时钟测执行耗时（steady_clock 不受系统调时间影响）
+        const auto start = std::chrono::steady_clock::now();
         (*task)();                               // 执行任务体
-        telemetry_.record_task_done(worker_id_); // 上报统计（原子 +1）
+        const auto elapsed = std::chrono::duration_cast<
+            std::chrono::microseconds>(std::chrono::steady_clock::now() -
+                                       start);
+        // 上报：该 worker 计数 +1、累计耗时（Telemetry 内部无锁原子）
+        telemetry_.record_task_done(worker_id_, elapsed);
     }
     // stop_ 预留字段：V2 若要做"立即急停"，把 pop 改成
     // "带超时轮询 stop_ 的变体"（当前 pop 是阻塞式，无法中途打断）。

@@ -33,8 +33,8 @@
 Month 1 Local Cognitive Core 已收官（解析→切分→向量化→检索→排序→持久化）。
 Month 2 网络层：TCP 回显 + 同步协议 v1 + 同步上 TCP 已落地；
 Memory Benchmark（Vector RAG vs Synapse Memory）已通过验收。
-Month 3 C++ Runtime 起步：CMake 工程 + 自研测试框架 + Task/Queue 已落地
-（Worker/Executor 核心循环由用户实现中）。
+Month 3 C++ Runtime：CMake + 测试框架 + Task/Queue 已落地，
+多线程 Task Runtime（Worker + Executor）已实现并验证通过。
 
 ```text
 本地核心（已完成 2026-10-14）：
@@ -48,8 +48,9 @@ PDF → Parser → Chunker → Embedding → Retrieval → Memory Score → Memo
 记忆层验收（2026-10-20）：
 Vector RAG ←— Benchmark —→ Synapse Memory（Temporal Retrieval + 5 指标对比）
 
-C++ Runtime（2026-10-21 起步，Month 3）：
-vcvars64 + CMake + 自研测试框架 → Task/Queue 基础设施 → Worker/Executor（用户实现中）
+C++ Runtime（2026-10-21~22，Month 3）：
+CMake 工程 + 自研测试框架 → Task/Queue → Worker/Executor 线程池
+（多线程 Task Runtime 已实现，14 C++ 单测全过）
 ```
 
 运行：
@@ -83,7 +84,8 @@ python benchmarks/memory/run_benchmark.py
 cmd /c build_runtime.bat                  # 一键：vcvars64 + configure + build
 runtime/build/Release/test_queue.exe      # 单测：线程安全队列（5 用例）
 runtime/build/Release/test_task.exe       # 单测：Task（4 用例）
-runtime/build/Release/demo_threadpool.exe # 演示：3 worker 消费 10 任务
+runtime/build/Release/test_executor.exe   # 单测：Executor 线程池（5 用例）
+runtime/build/Release/demo_threadpool.exe # 演示：4 worker 并发执行 10 任务
 ```
 
 ## Benchmark
@@ -111,7 +113,8 @@ runtime/build/Release/demo_threadpool.exe # 演示：3 worker 消费 10 任务
 - [x] 2026-10-20 Month 2 验收：Temporal Retrieval + Vector RAG vs Synapse Memory Benchmark（since 时间窗 + 5 指标对比，7 单测，168 全过）
 - [x] Month 2：网络基础 + P2P 同步协议 + Memory Benchmark 验收完成
 - [x] 2026-10-21 Month 3 环节 1：C++ Runtime 起步（CMake 工程 + 自研测试框架 + Task/线程安全 Queue + demo，9 单测全过，构建脚本可复现）
-- [ ] Month 3：Worker/Executor 多线程 Task Runtime（用户实现核心循环）
+- [x] 2026-10-22 Month 3 环节 2：Worker + Executor 实现（多线程 Task Runtime 核心：优雅停机/幂等 join/RAII 析构，+5 单测，14 全过，CTest 3/3）
+- [ ] Month 3：Device/Telemetry 深化 + 优先级调度（V2）
 
 ## 学习执行模式
 

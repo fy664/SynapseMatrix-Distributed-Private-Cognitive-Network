@@ -32,17 +32,17 @@ namespace synapse::runtime {
 class Worker {
 public:
     // 构造：启动一个后台线程（std::thread 构造即开始运行）
-    // 实现要点：
-    //   thread_ = std::thread([this] { run(); });
-    //   run() 是成员函数，lambda 捕获 this 即可调用
+    // 实现见 worker.cpp：thread_ = std::thread([this] { run(); });
     Worker(int worker_id, TaskQueue& queue, Telemetry& telemetry);
 
     // 析构：请求停止并等待线程退出（否则 std::thread 析构会 std::terminate）
-    // 实现要点：
-    //   stop_.store(true);
-    //   若线程在 pop 等待中，需要 queue.close() 或 notify 让它醒来
-    //   然后 thread_.join()（阻塞直到线程跑完 run()）
+    // 注意：join 必须是幂等的（joinable 检查），因为 Executor::shutdown()
+    // 已显式 join 过，析构时再 join 不能 UB。
     ~Worker();
+
+    // 等待线程退出（幂等：重复调用安全）。
+    // 线程退出条件：队列 close 且清空后 pop 返回 nullopt → run() 返回。
+    void join();
 
     // 不让复制：线程不可复制
     Worker(const Worker&) = delete;
@@ -51,19 +51,19 @@ public:
     [[nodiscard]] int id() const noexcept { return worker_id_; }
 
 private:
-    // 线程主循环：TODO（你实现）
-    //   while (!stop_) {
-    //     auto t = queue_.pop();
-    //     if (!t) break;            // 队列关闭且清空：退出
-    //     (*t)();                   // 执行任务
+    // 线程主循环（实现见 worker.cpp）：
+    //   while (auto task = queue_.pop()) {   // nullopt = 结束信号
+    //     (*task)();                          // 执行任务体
     //     telemetry_.record_task_done(worker_id_);
     //   }
+    // 优雅停止不靠 stop_（pop 的 nullopt 已足够）；stop_ 为 V2 的
+    // "立即急停"预留（届时 pop 改为带超时/中断的变体）。
     void run();
 
     int worker_id_;
     TaskQueue& queue_;
     Telemetry& telemetry_;
-    std::atomic<bool> stop_{false};  // 停止标志（原子量：跨线程可见）
+    std::atomic<bool> stop_{false};  // 停止标志（V2 急停用；V1 保留字段）
     std::thread thread_;             // 线程句柄（join 时用）
 };
 

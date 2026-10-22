@@ -25,19 +25,17 @@ else()
     add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
 
-# ---- 库：runtime 核心（当前仅 Queue/Task，Worker/Executor 由用户实现后并入）----
+# ---- 库：runtime 核心（Task/Queue/Worker/Executor/Telemetry）----
 add_library(synapse_core STATIC
     core/src/queue.cpp
+    core/src/worker.cpp
+    core/src/executor.cpp
 )
 
 target_include_directories(synapse_core PUBLIC core/include)
 
 # ---- 测试与演示 ----
 enable_testing()
-
-# 最小线程池示例（教学 + 工具链验证，编译运行即证明 thread/mutex/CV/atomic 可用）
-add_executable(demo_threadpool core/tests/demo_threadpool.cpp)
-target_link_libraries(demo_threadpool PRIVATE synapse_core)
 
 # 单测：线程安全队列
 add_executable(test_queue core/tests/test_queue.cpp)
@@ -48,3 +46,12 @@ add_test(NAME test_queue COMMAND test_queue)
 add_executable(test_task core/tests/test_task.cpp)
 target_link_libraries(test_task PRIVATE synapse_core)
 add_test(NAME test_task COMMAND test_task)
+
+# 单测：Executor 线程池（Month 3 环节 2）
+add_executable(test_executor core/tests/test_executor.cpp)
+target_link_libraries(test_executor PRIVATE synapse_core)
+add_test(NAME test_executor COMMAND test_executor)
+
+# 演示：Executor 驱动的多线程 Task Runtime
+add_executable(demo_threadpool core/tests/demo_threadpool.cpp)
+target_link_libraries(demo_threadpool PRIVATE synapse_core)

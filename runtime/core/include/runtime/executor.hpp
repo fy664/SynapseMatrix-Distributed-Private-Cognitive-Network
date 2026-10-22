@@ -23,17 +23,19 @@
 #pragma once
 
 #include <cstddef>
+#include <memory>
 #include <vector>
 
 #include "runtime/queue.hpp"
 #include "runtime/task.hpp"
+#include "runtime/telemetry.hpp"
 #include "runtime/worker.hpp"
 
 namespace synapse::runtime {
 
 class Executor {
 public:
-    // 构造：创建 num_workers 个 Worker 并共享一个队列
+    // 构造：创建 num_workers 个 Worker，共享一个队列 + 一套统计
     explicit Executor(std::size_t num_workers);
 
     // 析构：shutdown()（RAII——栈上对象销毁自动回收所有线程）
@@ -46,15 +48,27 @@ public:
     bool submit(Task task);
 
     // 优雅停机：close 队列 → 等待全部 Worker 退出
+    // 幂等：可多次调用（第二次起无操作）
     void shutdown();
 
     // 当前队列积压（Telemetry/调试）
     [[nodiscard]] std::size_t pending() const { return queue_.size(); }
 
+    // 运行统计（已执行任务总数等）——验收/观察用
+    [[nodiscard]] const Telemetry& telemetry() const noexcept {
+        return telemetry_;
+    }
+
 private:
-    TaskQueue queue_;                    // 共享任务队列
-    std::vector<Worker> workers_;        // Worker 集合（构造即启动线程）
-    std::size_t num_workers_;
+    TaskQueue queue_;                      // 共享任务队列
+    Telemetry telemetry_;                  // 运行统计（Worker 上报到这里）
+    // 用 unique_ptr<Worker> 而非 vector<Worker>：
+    //   Worker 含 std::atomic/std::thread，不可拷贝也不可移动，
+    //   vector 的 reserve/扩容需要可移动构造 → 编译失败。
+    //   指针容器：Worker 对象地址永不移动，线程捕获的 this 恒有效。
+    std::vector<std::unique_ptr<Worker>> workers_;
+    std::size_t num_workers_;              // 目标线程数（记录用）
+    bool shutdown_done_ = false;           // 幂等标志：shutdown 只执行一次
 };
 
 }  // namespace synapse::runtime

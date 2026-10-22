@@ -1,61 +1,46 @@
-// SynapseMatrix — 最小线程池演示（Month 3 环境验证 + 教学示例）
+// SynapseMatrix — 多线程 Task Runtime 演示（Month 3 验收预览）
 // ====================================================================
-// 目的：
-//   1. 验证工具链闭环（vcvars64 + CMake + C++20 编译/运行）
-//   2. 演示 Month 3 全部核心并发原语，作为你实现
-//      Worker/Executor 的"最小参考骨架"
+// 用 Executor（自己实现的线程池）提交 10 个任务，
+// 展示：submit → 并发执行 → 优雅关闭 → Telemetry 统计。
 //
-// 演示内容：
-//   - 手工创建 3 个消费者线程（std::thread），共享 1 个 TaskQueue
-//   - 主线程投递 10 个任务（每个打印"我是谁 + 干了什么"）
-//   - 关闭队列 → 消费者自然退出 → join 回收
+// 对比昨天的 demo_threadpool（手工 3 线程）：
+//   昨天是"手写消费循环"演示并发原语；
+//   今天用 Executor 封装——提交方不再关心线程细节。
 //
 // 408 映射：这就是"生产者-消费者问题"的直接实现——
 //   互斥（mutex）保护共享队列、条件变量（cv）避免忙等、
 //   join 对应进程/线程的回收（孤儿/僵尸线程管理）。
 //
-// 运行：cmake --build 后执行 runtime/build/Release/demo_threadpool.exe
+// 运行：runtime/build/Release/demo_threadpool.exe
 
 #include <cstdio>
-#include <thread>
-#include <vector>
 
-#include "runtime/queue.hpp"
+#include "runtime/executor.hpp"
 #include "runtime/task.hpp"
 
+using synapse::runtime::Executor;
 using synapse::runtime::Task;
-using synapse::runtime::TaskQueue;
 
 int main() {
-    TaskQueue queue;
-    constexpr int kWorkers = 3;      // 消费者线程数
-    constexpr int kTasks = 10;       // 任务数
+    constexpr int kWorkers = 4;
+    constexpr int kTasks = 10;
 
-    // 创建消费者线程：每个线程循环 pop，拿到任务就执行
-    std::vector<std::thread> workers;
-    for (int w = 0; w < kWorkers; ++w) {
-        workers.emplace_back([&, w] {
-            while (auto t = queue.pop()) {   // nullopt = 结束信号
-                std::printf("  [worker %d] 执行任务: %s\n", w, t->id().c_str());
-                (*t)();                      // 跑任务体
-            }
-            std::printf("  [worker %d] 队列已关闭，退出\n", w);
-        });
-    }
+    Executor executor(kWorkers);  // 4 个 worker 的线程池
 
-    // 主线程：投递任务（生产者侧）
+    // 提交 10 个任务：每个打印自己是第几个
     for (int i = 0; i < kTasks; ++i) {
-        queue.push(Task([i] {
-            std::printf("    任务体 %d：假装在计算…\n", i);
+        bool accepted = executor.submit(Task([i] {
+            std::printf("  任务 %d 执行中\n", i);
         }, "task-" + std::to_string(i)));
+        if (!accepted) {
+            std::printf("任务 %d 被拒绝（线程池已关闭？）\n", i);
+        }
     }
 
-    // 优雅关闭：先通知队列不再收活，等所有 worker 把手头活干完退出
-    queue.close();
-    for (auto& th : workers) {
-        th.join();
-    }
+    executor.shutdown();  // 优雅关闭：等全部任务执行完
 
-    std::printf("演示完成：%d 个任务被 %d 个 worker 消费。\n", kTasks, kWorkers);
+    std::printf("全部完成：%d 个任务，%d 个 worker，"
+                "Telemetry 统计执行数 = %zu\n",
+                kTasks, kWorkers, executor.telemetry().tasks_done());
     return 0;
 }

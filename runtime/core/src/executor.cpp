@@ -46,7 +46,10 @@ Executor::~Executor() {
 bool Executor::submit(Task task) {
     // 转发给队列；队列已关闭（shutdown 后）push 返回 false
     const bool accepted = queue_.push(std::move(task));
-    if (!accepted) {
+    if (accepted) {
+        // 入队成功 → 队列变长，采样当前积压（峰值只增不减）
+        telemetry_.record_watermark(queue_.size());
+    } else {
         telemetry_.record_rejected();  // 被拒计数（可观测性）
     }
     return accepted;

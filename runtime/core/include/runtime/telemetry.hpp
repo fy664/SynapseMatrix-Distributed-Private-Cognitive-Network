@@ -57,6 +57,20 @@ public:
         rejected_.fetch_add(1);
     }
 
+    // 队列水位采样：记录历史最大积压（峰值，单调不减）。
+    // 调用时机：每次 submit 成功后（入队使队列变长，可能创新高）。
+    // 无锁实现：CAS 循环更新 max——
+    //   load 当前峰值 → 若新值更大则 CAS 换入；失败说明别的线程
+    //   已把峰值提得更高，重试。对应 408 "无锁同步"思想。
+    void record_watermark(std::size_t current) {
+        std::size_t peak = peak_pending_.load();
+        while (current > peak &&
+               !peak_pending_.compare_exchange_weak(peak, current)) {
+            // CAS 失败：peak 已被刷新为最新值（别的线程更新），
+            // 循环重新比较 current 与最新 peak
+        }
+    }
+
     // ---- 查询（快照语义：调用瞬间的值）----
 
     // 总执行数 = 各 worker 求和
@@ -80,6 +94,11 @@ public:
     // 被拒绝的任务数
     [[nodiscard]] std::size_t rejected() const noexcept {
         return rejected_.load();
+    }
+
+    // 队列积压峰值（历史最大未消费任务数）——背压/容量规划依据
+    [[nodiscard]] std::size_t peak_pending() const noexcept {
+        return peak_pending_.load();
     }
 
     // 总执行耗时（微秒）
@@ -106,6 +125,7 @@ private:
     std::vector<std::atomic<std::size_t>> done_per_worker_;
     std::atomic<std::size_t> rejected_{0};           // 拒绝计数
     std::atomic<std::uint64_t> total_elapsed_us_{0}; // 总耗时（微秒）
+    std::atomic<std::size_t> peak_pending_{0};       // 队列积压峰值
 };
 
 }  // namespace synapse::runtime

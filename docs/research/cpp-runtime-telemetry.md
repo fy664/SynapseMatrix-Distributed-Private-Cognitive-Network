@@ -84,5 +84,34 @@ Telemetry 从"一个总数"升级为"分布 + 耗时 + 事件"三维度，
 - 优先级调度：Task 已带 Priority 字段但队列是 FIFO。下一步
   把 TaskQueue 换成优先队列（std::priority_queue + mutex/CV），
   高优先级先出队——408 优先级调度（PS，可抢占/非抢占）。
-- 队列水位峰值：submit/pop 时采样 queue_.size() 记录峰值积压，
-  可观测"高峰期队列有多深"（背压设计的依据）。
+- ~~队列水位峰值~~：已实现（2026-10-22，见下方补记）。
+
+## 补记（2026-10-22 环节 4）：队列水位峰值采样
+
+**需求**：可观测"高峰期队列有多深"——背压设计（队列满时
+拒绝/降速）的依据，也是容量规划的输入。
+
+**实现**：
+- `Telemetry::record_watermark(current)`：CAS 循环更新峰值
+  （compare_exchange_weak，无锁 max）
+- 调用点：`Executor::submit` 成功后采样 `queue_.size()`
+  （入队使队列变长，只有此时可能创新高；pop 只会变短）
+- `peak_pending()` 查询（Telemetry + Executor 两层暴露）
+
+**CAS 为什么是"无锁 max"**：
+```
+load 峰值 → 若 current > 峰值，CAS(旧峰值→current)
+CAS 失败 → 别的线程已把峰值提得更高，用新峰值重试
+```
+对应 408 硬件同步指令（x86 lock cmpxchg）——原子比较交换，
+失败自旋重试，无锁但无忙等浪费。
+
+**验证**（+5 单测，Telemetry 累计 12 用例）：
+- 单调不减（升序记录取最大）
+- 降序记录不回退
+- 初始 0
+- 并发 CAS 无丢失：4 线程 × 1000 次各自报水位，峰值 = 最大线程号
+- Executor 集成：单 worker + 50 个慢任务 → 峰值 > 1 且全部执行完
+
+**demo 实测**：10 任务 × 4 worker → 队列积压峰值 10
+（提交快于消费时队列短暂堆满，之后 worker 清空）。

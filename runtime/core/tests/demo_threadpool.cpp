@@ -47,6 +47,7 @@ int main() {
     std::printf("总执行数        : %zu\n", tm.tasks_done());
     std::printf("平均耗时/任务   : %.2f ms\n", tm.avg_task_ms());
     std::printf("拒绝数          : %zu\n", tm.rejected());
+    std::printf("队列积压峰值    : %zu\n", executor.peak_pending());
     std::printf("per-worker 分布 :");
     for (std::size_t w = 0; w < tm.worker_count(); ++w) {
         std::printf("  w%zu=%zu", w, tm.task_count(static_cast<int>(w)));

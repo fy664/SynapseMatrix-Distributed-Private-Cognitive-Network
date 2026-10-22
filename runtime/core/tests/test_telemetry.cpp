@@ -98,4 +98,67 @@ TEST(Telemetry, ExecutorIntegration) {
     EXPECT(covered >= 1);
 }
 
+// ---- 队列水位峰值（Month 3 环节 4）----
+
+// 8. 峰值单调不减：升序记录取最大
+TEST(Telemetry, WatermarkTracksMax) {
+    Telemetry tm(2);
+    tm.record_watermark(3);
+    tm.record_watermark(5);                       // 创新高
+    tm.record_watermark(2);                       // 变小：不影响峰值
+    tm.record_watermark(9);                       // 再创新高
+    EXPECT(tm.peak_pending() == 9);
+}
+
+// 9. 峰值不因降序记录而回退
+TEST(Telemetry, WatermarkNeverDecreases) {
+    Telemetry tm(2);
+    tm.record_watermark(10);
+    tm.record_watermark(1);                       // 小于峰值：忽略
+    tm.record_watermark(0);
+    EXPECT(tm.peak_pending() == 10);
+}
+
+// 10. 初始峰值为 0
+TEST(Telemetry, WatermarkStartsAtZero) {
+    Telemetry tm(2);
+    EXPECT(tm.peak_pending() == 0);
+}
+
+// 11. 并发水位采样：多个线程同时 record_watermark，峰值 >= 理论下界
+TEST(Telemetry, ConcurrentWatermarkNoLostUpdate) {
+    Telemetry tm(4);
+    constexpr int kThreads = 4;
+    constexpr int kPerThread = 1000;
+    std::vector<std::thread> threads;
+    for (int t = 0; t < kThreads; ++t) {
+        threads.emplace_back([&, t] {
+            for (int i = 0; i < kPerThread; ++i) {
+                // 每个线程报自己的序号作为水位；并发 CAS 下
+                // 峰值最终必须是全局最大值（kThreads-1）
+                tm.record_watermark(static_cast<std::size_t>(t));
+            }
+        });
+    }
+    for (auto& th : threads) {
+        th.join();
+    }
+    EXPECT(tm.peak_pending() == kThreads - 1);    // 最大线程号
+}
+
+// 12. Executor 集成：提交慢任务（worker 来不及消费）→ 峰值 > 1
+TEST(Telemetry, ExecutorWatermarkPeak) {
+    Executor ex(1);                               // 单 worker：消费慢
+    for (int i = 0; i < 50; ++i) {
+        ex.submit(Task([] {
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }, "slow"));
+    }
+    ex.shutdown();
+    // 单 worker 下提交 50 个 2ms 任务，提交完前队列必然积压，
+    // 峰值应明显大于 1（worker 边消费边堆积）
+    EXPECT(ex.peak_pending() > 1);
+    EXPECT(ex.telemetry().tasks_done() == 50);    // 且全部执行完
+}
+
 TEST_MAIN()

@@ -54,6 +54,11 @@ public:
     // 当前队列积压（Telemetry/调试）
     [[nodiscard]] std::size_t pending() const { return queue_.size(); }
 
+    // 队列积压峰值（历史最大；submit 时采样）——背压设计依据
+    [[nodiscard]] std::size_t peak_pending() const noexcept {
+        return telemetry_.peak_pending();
+    }
+
     // 运行统计（已执行任务总数等）——验收/观察用
     [[nodiscard]] const Telemetry& telemetry() const noexcept {
         return telemetry_;

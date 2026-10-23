@@ -1,18 +1,16 @@
 // SynapseMatrix — 多线程 Task Runtime 演示（Month 3 验收预览）
 // ====================================================================
-// 用 Executor（自己实现的线程池）提交 10 个任务，
-// 展示：submit → 并发执行 → 优雅关闭 → Telemetry 深化统计
-//（per-worker 分布 / 平均耗时 / 拒绝数）。
+// 用 Executor（自己实现的线程池，优先级调度版）提交任务，
+// 展示：submit → 优先级插队 → 并发执行 → 优雅关闭 → Telemetry 统计。
 //
-// 408 映射：这就是"生产者-消费者问题"的直接实现——
-//   互斥（mutex）保护共享队列、条件变量（cv）避免忙等、
-//   join 对应进程/线程的回收（孤儿/僵尸线程管理）。
-//   per-worker 计数 ≈ 多处理机系统里各 CPU 的运行统计。
+// 408 映射：生产者-消费者 + 优先级调度（PS）——
+//   高优先级任务插队先执行；同优先级 FIFO（seq 稳定排序）。
+//   对应"就绪队列按优先级排队，高优先级进程先上处理机"。
 //
 // 运行：runtime/build/Release/demo_threadpool.exe
 
-#include <cstdio>
 #include <chrono>
+#include <cstdio>
 #include <thread>
 
 #include "runtime/executor.hpp"
@@ -20,28 +18,32 @@
 
 using namespace std::chrono_literals;
 using synapse::runtime::Executor;
+using synapse::runtime::Priority;
 using synapse::runtime::Task;
 
 int main() {
-    constexpr int kWorkers = 4;
-    constexpr int kTasks = 10;
+    constexpr int kWorkers = 2;
 
-    Executor executor(kWorkers);  // 4 个 worker 的线程池
+    Executor executor(kWorkers);
 
-    // 提交 10 个任务：每个模拟 5ms 工作
-    for (int i = 0; i < kTasks; ++i) {
-        bool accepted = executor.submit(Task([i] {
-            std::this_thread::sleep_for(5ms);   // 模拟计算耗时
-            std::printf("  任务 %d 执行中\n", i);
-        }, "task-" + std::to_string(i)));
-        if (!accepted) {
-            std::printf("任务 %d 被拒绝（线程池已关闭？）\n", i);
-        }
+    // 先提交 6 个 Normal 任务，再提交 2 个 High——
+    // High 应插队先执行（优先级调度），Normal 之间保持 FIFO
+    for (int i = 0; i < 6; ++i) {
+        executor.submit(Task([i] {
+            std::this_thread::sleep_for(5ms);
+            std::printf("  [normal %d] 执行中\n", i);
+        }, "normal-" + std::to_string(i), Priority::Normal));
+    }
+    for (int i = 0; i < 2; ++i) {
+        executor.submit(Task([i] {
+            std::this_thread::sleep_for(5ms);
+            std::printf("  [HIGH %d]  插队执行！\n", i);
+        }, "high-" + std::to_string(i), Priority::High));
     }
 
     executor.shutdown();  // 优雅关闭：等全部任务执行完
 
-    // ---- Telemetry 深化输出 ----
+    // ---- Telemetry 输出 ----
     const auto& tm = executor.telemetry();
     std::printf("\n=== Telemetry 统计 ===\n");
     std::printf("总执行数        : %zu\n", tm.tasks_done());

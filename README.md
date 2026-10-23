@@ -85,8 +85,9 @@ cmd /c build_runtime.bat                  # 一键：vcvars64 + configure + buil
 runtime/build/Release/test_queue.exe      # 单测：线程安全队列（5 用例）
 runtime/build/Release/test_task.exe       # 单测：Task（4 用例）
 runtime/build/Release/test_executor.exe   # 单测：Executor 线程池（5 用例）
-runtime/build/Release/test_telemetry.exe  # 单测：Telemetry 深化（7 用例）
-runtime/build/Release/demo_threadpool.exe # 演示：4 worker 并发执行 10 任务 + 统计
+runtime/build/Release/test_telemetry.exe  # 单测：Telemetry 深化（12 用例）
+runtime/build/Release/test_priority.exe   # 单测：优先级调度（5 用例）
+runtime/build/Release/demo_threadpool.exe # 演示：优先级插队 + 并发执行 + 统计
 ```
 
 ## Benchmark
@@ -117,7 +118,8 @@ runtime/build/Release/demo_threadpool.exe # 演示：4 worker 并发执行 10 �
 - [x] 2026-10-22 Month 3 环节 2：Worker + Executor 实现（多线程 Task Runtime 核心：优雅停机/幂等 join/RAII 析构，+5 单测，14 全过，CTest 3/3）
 - [x] 2026-10-22 Month 3 环节 3：Telemetry 深化（per-worker 独立计数 + 拒绝计数 + 耗时统计，+7 单测，21 全过，CTest 4/4）
 - [x] 2026-10-22 Month 3 环节 4：队列水位峰值采样（CAS 无锁 max，背压设计依据，+5 单测，26 全过）
-- [ ] Month 3：优先级调度（Task Priority → 优先队列，408 优先级调度 PS）
+- [x] 2026-10-23 Month 3 环节 5：优先级调度（deque → priority_queue + seq 稳定排序，408 优先级调度 PS，+5 单测，31 全过，CTest 5/5）
+- [ ] Month 3：抢占式调度 / 背压（积压峰值超阈值限速）
 
 ## 学习执行模式
 

@@ -57,6 +57,11 @@ add_executable(test_telemetry core/tests/test_telemetry.cpp)
 target_link_libraries(test_telemetry PRIVATE synapse_core)
 add_test(NAME test_telemetry COMMAND test_telemetry)
 
+# 单测：优先级调度（Month 3 环节 5）
+add_executable(test_priority core/tests/test_priority.cpp)
+target_link_libraries(test_priority PRIVATE synapse_core)
+add_test(NAME test_priority COMMAND test_priority)
+
 # 演示：Executor 驱动的多线程 Task Runtime
 add_executable(demo_threadpool core/tests/demo_threadpool.cpp)
 target_link_libraries(demo_threadpool PRIVATE synapse_core)

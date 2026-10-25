@@ -119,7 +119,8 @@ runtime/build/Release/demo_threadpool.exe # 演示：优先级插队 + 并发执
 - [x] 2026-10-22 Month 3 环节 3：Telemetry 深化（per-worker 独立计数 + 拒绝计数 + 耗时统计，+7 单测，21 全过，CTest 4/4）
 - [x] 2026-10-22 Month 3 环节 4：队列水位峰值采样（CAS 无锁 max，背压设计依据，+5 单测，26 全过）
 - [x] 2026-10-23 Month 3 环节 5：优先级调度（deque → priority_queue + seq 稳定排序，408 优先级调度 PS，+5 单测，31 全过，CTest 5/5）
-- [ ] Month 3：抢占式调度 / 背压（积压峰值超阈值限速）
+- [x] 2026-10-25 Month 3 环节 6：老化防饥饿（multiset 全量扫描 + boost 封顶，408 MLFQ 防饿死，+5 单测，36 全过）
+- [ ] Month 3：背压（积压峰值超阈值限速）
 
 ## 学习执行模式
 

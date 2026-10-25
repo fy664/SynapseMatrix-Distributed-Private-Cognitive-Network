@@ -22,6 +22,7 @@
 
 #pragma once
 
+#include <chrono>
 #include <cstddef>
 #include <memory>
 #include <vector>
@@ -36,7 +37,12 @@ namespace synapse::runtime {
 class Executor {
 public:
     // 构造：创建 num_workers 个 Worker，共享一个队列 + 一套统计
-    explicit Executor(std::size_t num_workers);
+    // aging_interval/aging_max_boost 透传给队列（老化防饥饿，
+    // 默认禁用 = 纯优先级，行为与环节 5 一致）
+    explicit Executor(std::size_t num_workers,
+                      std::chrono::milliseconds aging_interval =
+                          std::chrono::milliseconds::zero(),
+                      int aging_max_boost = 2);
 
     // 析构：shutdown()（RAII——栈上对象销毁自动回收所有线程）
     ~Executor();

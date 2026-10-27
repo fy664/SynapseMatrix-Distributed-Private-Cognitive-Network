@@ -45,6 +45,13 @@
 // 关闭语义（close）：
 //   队列可被显式关闭；关闭后 push 拒绝、pop 在队列清空后返回 nullopt。
 //   Executor 停机时先 close 再让 Worker 自然退出——优雅关闭。
+//   close 同时唤醒两类等待者（消费者 + 阻塞生产者）。
+//
+// 阻塞式背压（环节 8，2026-10-27）：
+//   拒绝式背压（push）满则拒；阻塞式（push_wait）满则等——
+//   生产者等待消费者 pop 腾出空位，最多等 timeout 毫秒。
+//   两个条件变量（cv_=有货、cv_space_=有空位）正是 408 生产者-
+//   消费者问题里 empty/full 两个信号量的现代 C++ 等价物。
 //
 // 语法讲解：
 //   - std::optional<T>        : C++17 起，"可能有值也可能没有"的包装
@@ -118,6 +125,29 @@ public:
         return true;
     }
 
+    // 阻塞式背压（环节 8）：队列满时等待空位，最多等 timeout；
+    // 超时或队列关闭返回 false。对应 408 生产者-消费者经典解法
+    // "缓冲满则等待"——两个条件变量 = empty/full 两个信号量。
+    bool push_wait(Task task, std::chrono::milliseconds timeout) {
+        std::unique_lock<std::mutex> lock(mutex_);
+        // 满则等：等"有空位 或 已关闭"。谓词重载自动处理虚假唤醒。
+        if (max_capacity_ > 0) {
+            if (!cv_space_.wait_for(lock, timeout, [this] {
+                    return closed_ || queue_.size() < max_capacity_;
+                })) {
+                return false;      // 超时仍满（或已关闭）→ 放弃
+            }
+        }
+        if (closed_) {
+            return false;          // 关闭：拒绝
+        }
+        const std::uint64_t seq = seq_counter_++;
+        queue_.insert(Entry{std::move(task), seq,
+                            std::chrono::steady_clock::now(), 0});
+        cv_.notify_one();          // 通知消费者"有新任务"
+        return true;
+    }
+
     // ---- 消费者侧 ----
     // 取一个任务；队列关闭且清空时返回 nullopt（worker 应退出）。
     // 带老化：pop 前全量扫描一次，把等待超阈值的所有任务提升，
@@ -155,6 +185,8 @@ public:
         // 取最优先：begin() 是"有效优先级最高 + seq 最小"的任务
         Task t = queue_.begin()->task;
         queue_.erase(queue_.begin());
+        // 出队腾出一个空位 → 唤醒一个等待"有空位"的阻塞生产者
+        cv_space_.notify_one();
         return t;
     }
 
@@ -165,7 +197,8 @@ public:
             std::lock_guard<std::mutex> lock(mutex_);
             closed_ = true;
         }
-        cv_.notify_all();  // 唤醒所有等待者，让它们检查关闭状态
+        cv_.notify_all();      // 唤醒消费者：检查关闭状态
+        cv_space_.notify_all(); // 唤醒阻塞生产者：让它们超时/退出
     }
 
     // 当前队列长度（调试/Telemetry 用；注意锁外看会有竞态，仅近似）
@@ -200,6 +233,7 @@ private:
 
     mutable std::mutex mutex_;      // mutable：size() const 也要能加锁
     std::condition_variable cv_;    // 消费者等待"队列非空"
+    std::condition_variable cv_space_; // 生产者等待"队列有空位"（环节 8）
     std::multiset<Entry, Compare> queue_;       // 红黑树（按有效优先级排序）
     std::uint64_t seq_counter_ = 0; // 入队序号分配器（锁内递增）
     bool closed_ = false;           // 关闭标志

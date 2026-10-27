@@ -56,6 +56,10 @@ public:
     // 提交任务：队列已关闭时返回 false（调用方可据实处理）
     bool submit(Task task);
 
+    // 阻塞式提交（环节 8）：队列满时等待空位，最多等 timeout；
+    // 超时或已关闭返回 false。对应 408 生产者-消费者"满则等"。
+    bool push_wait(Task task, std::chrono::milliseconds timeout);
+
     // 优雅停机：close 队列 → 等待全部 Worker 退出
     // 幂等：可多次调用（第二次起无操作）
     void shutdown();

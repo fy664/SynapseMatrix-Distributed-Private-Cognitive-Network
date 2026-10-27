@@ -59,6 +59,17 @@ bool Executor::submit(Task task) {
     return accepted;
 }
 
+bool Executor::push_wait(Task task, std::chrono::milliseconds timeout) {
+    // 阻塞式背压：满则等空位（超时返回 false）
+    const bool accepted = queue_.push_wait(std::move(task), timeout);
+    if (accepted) {
+        telemetry_.record_watermark(queue_.size());
+    } else {
+        telemetry_.record_rejected();  // 超时未入队也计拒绝
+    }
+    return accepted;
+}
+
 void Executor::shutdown() {
     // 幂等保护：shutdown 可被多次调用（如显式调用 + 析构自动调用）。
     if (shutdown_done_) {

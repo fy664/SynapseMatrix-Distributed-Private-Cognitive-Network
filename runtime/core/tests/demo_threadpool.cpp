@@ -76,5 +76,25 @@ int main() {
                     static_cast<int>(bounded.telemetry().rejected()),
                     bounded.peak_pending());
     }
+
+    // ---- 阻塞式背压演示（环节 8）：push_wait 满则等 ----
+    {
+        Executor bounded(1, 0ms, 2, 3);   // 单 worker + 容量 3
+        bounded.submit(Task([] { std::this_thread::sleep_for(20ms); },
+                            "occupy", Priority::High));
+        int accepted = 0;
+        for (int i = 0; i < 6; ++i) {
+            if (bounded.push_wait(Task([] {}, "t" + std::to_string(i),
+                                       Priority::Normal),
+                                  2000ms)) {
+                ++accepted;   // 满则等空位，最终全部挤进去
+            }
+        }
+        bounded.shutdown();
+        std::printf("\n=== 阻塞式背压演示（容量 3） ===\n");
+        std::printf("push_wait 6 个，全部入队 %d 个，拒绝 %d 个\n",
+                    accepted,
+                    static_cast<int>(bounded.telemetry().rejected()));
+    }
     return 0;
 }

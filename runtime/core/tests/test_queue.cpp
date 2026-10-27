@@ -164,4 +164,75 @@ TEST(Queue, ExecutorCapacityRejectsAndCounts) {
     EXPECT(ex.telemetry().tasks_done() == 4);    // occupy+a+b+c 全执行
 }
 
+// ---- 阻塞式背压：push_wait（Month 3 环节 8）----
+
+// 10. 有空位时 push_wait 立即成功
+TEST(Queue, PushWaitSucceedsWhenSpace) {
+    TaskQueue q(0ms, 2, 2);            // 容量 2
+    EXPECT(q.push_wait(Task([] {}, "a"), 100ms));
+    EXPECT(q.size() == 1);
+}
+
+// 11. 满时 push_wait 阻塞，pop 腾位后被唤醒成功入队
+TEST(Queue, PushWaitBlocksUntilPop) {
+    TaskQueue q(0ms, 2, 1);            // 容量 1
+    q.push(Task([] {}, "a"));          // 占满
+    std::atomic<bool> pushed{false};
+    std::thread producer([&] {
+        pushed = q.push_wait(Task([] {}, "b"), 2000ms);
+    });
+    std::this_thread::sleep_for(30ms); // 确保生产者已进入等待
+    q.pop();                           // 消费者腾出一个空位
+    producer.join();
+    EXPECT(pushed.load());             // 被唤醒后成功入队
+    EXPECT(q.size() == 1);             // a 被取走，b 入队
+}
+
+// 12. 无消费者腾位时 push_wait 超时返回 false
+TEST(Queue, PushWaitTimesOutWhenFull) {
+    TaskQueue q(0ms, 2, 1);            // 容量 1
+    q.push(Task([] {}, "a"));          // 占满
+    const bool ok = q.push_wait(Task([] {}, "b"), 50ms);
+    EXPECT(!ok);                       // 超时放弃
+    EXPECT(q.size() == 1);             // b 未入队
+}
+
+// 13. close 后 push_wait 立即返回 false
+TEST(Queue, PushWaitAfterCloseRejected) {
+    TaskQueue q(0ms, 2, 1);
+    q.close();
+    EXPECT(!q.push_wait(Task([] {}, "a"), 50ms));
+}
+
+// 14. 满时 close 唤醒阻塞生产者 → 返回 false（不死等）
+TEST(Queue, PushWaitWakeOnClose) {
+    TaskQueue q(0ms, 2, 1);
+    q.push(Task([] {}, "a"));
+    std::atomic<bool> done{false};
+    std::thread producer([&] {
+        q.push_wait(Task([] {}, "b"), 5000ms);
+        done = true;
+    });
+    std::this_thread::sleep_for(30ms); // 确保生产者已进入等待
+    q.close();                         // 关闭：唤醒生产者
+    producer.join();
+    EXPECT(done.load());               // 生产者已退出（未被饿住）
+}
+
+// 15. Executor 集成：满时 push_wait 等待空位后全部入队
+TEST(Queue, ExecutorPushWaitAllAccepted) {
+    Executor ex(1, 0ms, 2, 2);         // 单 worker + 容量 2
+    int accepted = 0;
+    for (int i = 0; i < 6; ++i) {
+        if (ex.push_wait(Task([] { std::this_thread::sleep_for(1ms); },
+                              "t" + std::to_string(i)), 5000ms)) {
+            ++accepted;
+        }
+    }
+    ex.shutdown();
+    EXPECT(accepted == 6);             // 全部挤进有界队列（等空位）
+    EXPECT(ex.telemetry().rejected() == 0);
+    EXPECT(ex.telemetry().tasks_done() == 6);
+}
+
 TEST_MAIN()

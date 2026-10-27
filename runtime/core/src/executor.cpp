@@ -28,8 +28,9 @@ namespace synapse::runtime {
 
 Executor::Executor(std::size_t num_workers,
                    std::chrono::milliseconds aging_interval,
-                   int aging_max_boost)
-    : queue_(aging_interval, aging_max_boost),   // 老化参数透传队列
+                   int aging_max_boost,
+                   std::size_t max_capacity)
+    : queue_(aging_interval, aging_max_boost, max_capacity), // 背压阈值透传
       telemetry_(num_workers),      // Telemetry 定大小（每 worker 一格）
       num_workers_(num_workers) {
     // 预分配指针数组：unique_ptr 移动便宜，容量不足时只搬指针

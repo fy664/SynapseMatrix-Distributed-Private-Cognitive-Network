@@ -18,9 +18,12 @@
 #include <thread>
 #include <vector>
 
+#include "runtime/executor.hpp"
 #include "runtime/queue.hpp"
 #include "runtime/task.hpp"
 
+using namespace std::chrono_literals;
+using synapse::runtime::Executor;
 using synapse::runtime::Priority;
 using synapse::runtime::Task;
 using synapse::runtime::TaskQueue;
@@ -111,6 +114,54 @@ TEST(Queue, PopBlocksUntilPush) {
     q.push(Task([] {}, "wake"));
     consumer.join();
     EXPECT(got.load());       // 被唤醒且拿到任务
+}
+
+// ---- 背压：有界队列（Month 3 环节 7）----
+
+// 6. 容量满时 push 被拒（拒绝式背压）
+TEST(Queue, CapacityRejectsWhenFull) {
+    TaskQueue q(0ms, 2, 2);            // 容量 2
+    EXPECT(q.push(Task([] {}, "a")));  // 1/2
+    EXPECT(q.push(Task([] {}, "b")));  // 2/2
+    EXPECT(!q.push(Task([] {}, "c"))); // 满：拒绝
+    EXPECT(q.size() == 2);             // 队列保持 2 个
+}
+
+// 7. 默认无容量限制（回归：老行为不变）
+TEST(Queue, CapacityUnlimitedByDefault) {
+    TaskQueue q;                       // 默认 max_capacity = 0
+    for (int i = 0; i < 100; ++i) {
+        EXPECT(q.push(Task([] {}, "t" + std::to_string(i))));
+    }
+    EXPECT(q.size() == 100);
+}
+
+// 8. pop 释放容量后可继续入队
+TEST(Queue, CapacityFreesAfterPop) {
+    TaskQueue q(0ms, 2, 2);            // 容量 2
+    q.push(Task([] {}, "a"));
+    q.push(Task([] {}, "b"));
+    EXPECT(!q.push(Task([] {}, "c"))); // 满
+    q.pop();                           // 腾出一个位置
+    EXPECT(q.push(Task([] {}, "c")));  // 恢复可入队
+    EXPECT(q.size() == 2);
+}
+
+// 9. Executor 集成：容量满时 submit 被拒并计入 rejected
+TEST(Queue, ExecutorCapacityRejectsAndCounts) {
+    using namespace std::chrono_literals;
+    Executor ex(1, 0ms, 2, 3);         // 单 worker + 容量 3
+    // 占住 worker（High 优先级，先被取走执行）
+    ex.submit(Task([] { std::this_thread::sleep_for(30ms); }, "occupy",
+                   Priority::High));
+    ex.submit(Task([] {}, "a"));
+    ex.submit(Task([] {}, "b"));
+    std::this_thread::sleep_for(5ms);  // 确保 occupy 已被 worker 取出执行
+    EXPECT(ex.submit(Task([] {}, "c")));   // 队列 [a,b] → c 入队 → 3 满
+    EXPECT(!ex.submit(Task([] {}, "d")));  // 满：背压拒绝
+    EXPECT(ex.telemetry().rejected() == 1);      // 恰 1 个被拒
+    ex.shutdown();
+    EXPECT(ex.telemetry().tasks_done() == 4);    // occupy+a+b+c 全执行
 }
 
 TEST_MAIN()

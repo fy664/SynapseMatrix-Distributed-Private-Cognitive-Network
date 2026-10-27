@@ -39,10 +39,13 @@ public:
     // 构造：创建 num_workers 个 Worker，共享一个队列 + 一套统计
     // aging_interval/aging_max_boost 透传给队列（老化防饥饿，
     // 默认禁用 = 纯优先级，行为与环节 5 一致）
+    // max_capacity：有界队列容量（背压，环节 7）。0 = 无限制；
+    //   >0 时积压达上限后 submit 返回 false（拒绝式背压）
     explicit Executor(std::size_t num_workers,
                       std::chrono::milliseconds aging_interval =
                           std::chrono::milliseconds::zero(),
-                      int aging_max_boost = 2);
+                      int aging_max_boost = 2,
+                      std::size_t max_capacity = 0);
 
     // 析构：shutdown()（RAII——栈上对象销毁自动回收所有线程）
     ~Executor();

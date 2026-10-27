@@ -55,5 +55,26 @@ int main() {
         std::printf("  w%zu=%zu", w, tm.task_count(static_cast<int>(w)));
     }
     std::printf("\n");
+
+    // ---- 背压演示（环节 7）：容量 3 的有界队列 ----
+    {
+        Executor bounded(1, 0ms, 2, 3);   // 单 worker + 容量 3
+        // 占住 worker → 队列能积压到 3；第 4 个起被拒
+        bounded.submit(Task([] { std::this_thread::sleep_for(30ms); },
+                            "occupy", Priority::High));
+        int accepted = 0;
+        for (int i = 0; i < 6; ++i) {
+            if (bounded.submit(Task([] {}, "t" + std::to_string(i),
+                                    Priority::Normal))) {
+                ++accepted;
+            }
+        }
+        bounded.shutdown();
+        std::printf("\n=== 背压演示（容量 3） ===\n");
+        std::printf("提交 6 个，入队 %d 个，拒绝 %d 个（积压峰值 %zu）\n",
+                    accepted,
+                    static_cast<int>(bounded.telemetry().rejected()),
+                    bounded.peak_pending());
+    }
     return 0;
 }

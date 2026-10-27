@@ -79,23 +79,34 @@ public:
     //   有效优先级 +1（最多 aging_max_boost 级）。
     // aging_max_boost：老化提升上限，防止无限抬升（也防比较器
     //   溢出），通常设为"最高优先级与最低之差"即可。
+    // max_capacity：有界队列容量（背压，环节 7）。0 = 无限制。
+    //   >0 时队列积压达到该值，push 返回 false（拒绝式背压）——
+    //   对应 408 生产者-消费者"缓冲满则等待/丢弃"与 TCP 流控
+    //   （接收窗口为 0 时发送方停止发送）。
     explicit TaskQueue(
         std::chrono::milliseconds aging_interval = std::chrono::milliseconds::zero(),
-        int aging_max_boost = 2)
-        : aging_interval_(aging_interval), aging_max_boost_(aging_max_boost) {}
+        int aging_max_boost = 2,
+        std::size_t max_capacity = 0)
+        : aging_interval_(aging_interval),
+          aging_max_boost_(aging_max_boost),
+          max_capacity_(max_capacity) {}
 
     // 禁止拷贝/赋值：互斥锁不可复制（std::mutex 不可拷贝构造）
     TaskQueue(const TaskQueue&) = delete;
     TaskQueue& operator=(const TaskQueue&) = delete;
 
     // ---- 生产者侧 ----
-    // 入队一个任务；队列已关闭时返回 false（任务被拒绝）
+    // 入队一个任务；队列已关闭或积压达上限时返回 false（任务被拒绝）
     bool push(Task task) {
         {
             // lock_guard：作用域结束（}处）自动解锁——异常也会解锁
             std::lock_guard<std::mutex> lock(mutex_);
             if (closed_) {
                 return false;      // 已关闭：拒绝新任务
+            }
+            // 背压：积压已达容量上限 → 拒绝（有界队列满则拒收）
+            if (max_capacity_ > 0 && queue_.size() >= max_capacity_) {
+                return false;
             }
             // 打上入队序号（同优先级 FIFO 的稳定键）与入队时间戳
             //（老化计时起点），插入红黑树（O(log n)）
@@ -194,6 +205,7 @@ private:
     bool closed_ = false;           // 关闭标志
     std::chrono::milliseconds aging_interval_; // 老化间隔（0=禁用）
     int aging_max_boost_;           // 老化提升上限
+    std::size_t max_capacity_;      // 有界队列容量（0=无限制，背压阈值）
 };
 
 }  // namespace synapse::runtime

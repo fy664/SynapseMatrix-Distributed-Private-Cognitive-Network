@@ -25,6 +25,7 @@
 #include <chrono>
 #include <cstddef>
 #include <memory>
+#include <mutex>
 #include <vector>
 
 #include "runtime/queue.hpp"
@@ -41,11 +42,18 @@ public:
     // 默认禁用 = 纯优先级，行为与环节 5 一致）
     // max_capacity：有界队列容量（背压，环节 7）。0 = 无限制；
     //   >0 时积压达上限后 submit 返回 false（拒绝式背压）
+    // max_workers：扩容上限（环节 9）。0 = 等于 num_workers（不扩容）。
+    //   >0 时 worker 数可动态增长到该上限。
+    // auto_scale_threshold：自动扩容阈值。0 = 关闭。
+    //   >0 时每次成功入队后检查积压，若 >= 阈值且未达上限，
+    //   自动新增一个 worker（监控 → 治理闭环）。
     explicit Executor(std::size_t num_workers,
                       std::chrono::milliseconds aging_interval =
                           std::chrono::milliseconds::zero(),
                       int aging_max_boost = 2,
-                      std::size_t max_capacity = 0);
+                      std::size_t max_capacity = 0,
+                      std::size_t max_workers = 0,
+                      std::size_t auto_scale_threshold = 0);
 
     // 析构：shutdown()（RAII——栈上对象销毁自动回收所有线程）
     ~Executor();
@@ -67,6 +75,12 @@ public:
     // 当前队列积压（Telemetry/调试）
     [[nodiscard]] std::size_t pending() const { return queue_.size(); }
 
+    // 当前活跃 Worker 数（环节 9：动态扩容后可能 > num_workers）
+    [[nodiscard]] std::size_t active_workers() const {
+        std::lock_guard<std::mutex> lock(worker_mutex_);
+        return workers_.size();
+    }
+
     // 队列积压峰值（历史最大；submit 时采样）——背压设计依据
     [[nodiscard]] std::size_t peak_pending() const noexcept {
         return telemetry_.peak_pending();
@@ -85,8 +99,17 @@ private:
     //   vector 的 reserve/扩容需要可移动构造 → 编译失败。
     //   指针容器：Worker 对象地址永不移动，线程捕获的 this 恒有效。
     std::vector<std::unique_ptr<Worker>> workers_;
-    std::size_t num_workers_;              // 目标线程数（记录用）
+    mutable std::mutex worker_mutex_;      // 保护 workers_ 数组（扩容/遍历/join）
+    std::size_t num_workers_;              // 初始线程数（记录用）
+    std::size_t max_workers_;              // 扩容上限（0=不扩容）
+    std::size_t auto_scale_threshold_;     // 自动扩容阈值（0=关闭）
+    std::size_t next_worker_id_ = 0;       // 下一个 worker 的 id（递增分配）
     bool shutdown_done_ = false;           // 幂等标志：shutdown 只执行一次
+
+    // 动态扩容（环节 9）：成功入队后检查积压，超阈值且未达上限
+    // 则新增一个 worker。双重检查（先无锁看、再加锁复查）避免
+    // 每次 submit 都抢锁。
+    void maybe_grow();
 };
 
 }  // namespace synapse::runtime

@@ -96,5 +96,21 @@ int main() {
                     accepted,
                     static_cast<int>(bounded.telemetry().rejected()));
     }
+
+    // ---- 动态扩容演示（环节 9）：积压超阈值自动加 worker ----
+    {
+        // 初始 1 worker，上限 4；积压 >= 4 时自动扩容
+        Executor scaling(1, 0ms, 2, 0, 4, 4);
+        scaling.submit(Task([] { std::this_thread::sleep_for(40ms); },
+                            "occupy", Priority::High));
+        for (int i = 0; i < 24; ++i) {
+            scaling.submit(Task([] { std::this_thread::sleep_for(5ms); },
+                                "t" + std::to_string(i), Priority::Normal));
+        }
+        scaling.shutdown();
+        std::printf("\n=== 动态扩容演示 ===\n");
+        std::printf("初始 1 worker，高峰自动扩容到 %zu 个，24+1 任务全部执行\n",
+                    scaling.active_workers());
+    }
     return 0;
 }

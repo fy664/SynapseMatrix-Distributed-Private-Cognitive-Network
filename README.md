@@ -122,7 +122,8 @@ runtime/build/Release/demo_threadpool.exe # 演示：优先级插队 + 并发执
 - [x] 2026-10-25 Month 3 环节 6：老化防饥饿（multiset 全量扫描 + boost 封顶，408 MLFQ 防饿死，+5 单测，36 全过）
 - [x] 2026-10-27 Month 3 环节 7：背压（有界队列 + 满则拒绝，408 生产者-消费者有限缓冲，+4 单测，40 全过）
 - [x] 2026-10-27 Month 3 环节 8：阻塞式背压（push_wait 满则等 + 超时，双条件变量 = empty/full 信号量，+6 单测，46 全过）
-- [ ] Month 3：动态扩容（峰值超阈值自动加 worker）
+- [x] 2026-10-28 Month 3 环节 9：动态扩容（积压超阈值自动加 worker，监控→治理闭环，+4 单测，50 全过）
+- [ ] Month 3：动态缩容 / Work-Stealing
 
 ## 学习执行模式
 

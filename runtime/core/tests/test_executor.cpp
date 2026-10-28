@@ -19,7 +19,9 @@
 
 #include "runtime/executor.hpp"
 
+using namespace std::chrono_literals;
 using synapse::runtime::Executor;
+using synapse::runtime::Priority;
 using synapse::runtime::Task;
 
 // 1. 提交 N 个任务全部执行
@@ -100,6 +102,60 @@ TEST(Executor, DestructorShutsDown) {
         }
     }                                            // 析构隐式 shutdown
     EXPECT(done.load() == 10);                   // 析构前任务全部完成
+}
+
+// ---- 动态扩容（Month 3 环节 9）----
+
+// 6. 积压超阈值自动扩容：worker 数增长且任务全部执行
+TEST(Executor, GrowAddsWorkerOnHighBacklog) {
+    // 初始 1 worker，上限 3；积压 >= 4 时自动加 worker
+    Executor ex(1, 0ms, 2, 0, 3, 4);
+    EXPECT(ex.active_workers() == 1);            // 初始 1 个
+    // 先占住唯一的 worker，制造积压
+    ex.submit(Task([] { std::this_thread::sleep_for(50ms); }, "occupy"));
+    std::atomic<int> done{0};
+    for (int i = 0; i < 20; ++i) {
+        ex.submit(Task([&] { done.fetch_add(1); },
+                       "t" + std::to_string(i)));
+    }
+    // 提交 20 个后，积压超阈值 → 应已扩容（>1）
+    EXPECT(ex.active_workers() > 1);
+    ex.shutdown();
+    EXPECT(done.load() == 20);                   // 20 个计数任务全部执行
+}
+
+// 7. 积压未超阈值不扩容（保持初始数）
+TEST(Executor, NoGrowWhenBacklogLow) {
+    Executor ex(2, 0ms, 2, 0, 4, 100);           // 阈值 100（很高）
+    for (int i = 0; i < 5; ++i) {
+        ex.submit(Task([] {}, "t" + std::to_string(i)));
+    }
+    ex.shutdown();
+    EXPECT(ex.active_workers() == 2);            // 未触发扩容
+}
+
+// 8. 默认关闭自动扩容（回归：老行为不变）
+TEST(Executor, NoGrowByDefault) {
+    Executor ex(2);                              // 不传扩容参数
+    for (int i = 0; i < 50; ++i) {
+        ex.submit(Task([] { std::this_thread::sleep_for(1ms); },
+                       "t" + std::to_string(i)));
+    }
+    ex.shutdown();
+    EXPECT(ex.active_workers() == 2);            // worker 数不变
+}
+
+// 9. 扩容到上限后停止：积压再高也不会超过 max_workers
+TEST(Executor, GrowStopsAtMax) {
+    Executor ex(1, 0ms, 2, 0, 3, 2);             // 上限 3，阈值 2
+    ex.submit(Task([] { std::this_thread::sleep_for(50ms); }, "occupy"));
+    for (int i = 0; i < 200; ++i) {
+        ex.submit(Task([] {}, "t" + std::to_string(i)));
+    }
+    // 快速提交 200 个，扩容最多到 3
+    EXPECT(ex.active_workers() <= 3);
+    ex.shutdown();
+    EXPECT(ex.active_workers() == 3);            // 实际扩满到上限
 }
 
 TEST_MAIN()

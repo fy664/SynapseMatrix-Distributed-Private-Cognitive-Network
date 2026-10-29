@@ -22,6 +22,7 @@
 
 #pragma once
 
+#include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <memory>
@@ -47,13 +48,18 @@ public:
     // auto_scale_threshold：自动扩容阈值。0 = 关闭。
     //   >0 时每次成功入队后检查积压，若 >= 阈值且未达上限，
     //   自动新增一个 worker（监控 → 治理闭环）。
+    // idle_timeout：空闲缩容超时（环节 10）。0 = 关闭（默认）。
+    //   >0 时 worker 空闲超过该时长且线程数 > 核心数（=num_workers）
+    //   自动退役——扩容的对称治理：忙时扩、闲时缩。
     explicit Executor(std::size_t num_workers,
                       std::chrono::milliseconds aging_interval =
                           std::chrono::milliseconds::zero(),
                       int aging_max_boost = 2,
                       std::size_t max_capacity = 0,
                       std::size_t max_workers = 0,
-                      std::size_t auto_scale_threshold = 0);
+                      std::size_t auto_scale_threshold = 0,
+                      std::chrono::milliseconds idle_timeout =
+                          std::chrono::milliseconds::zero());
 
     // 析构：shutdown()（RAII——栈上对象销毁自动回收所有线程）
     ~Executor();
@@ -75,10 +81,12 @@ public:
     // 当前队列积压（Telemetry/调试）
     [[nodiscard]] std::size_t pending() const { return queue_.size(); }
 
-    // 当前活跃 Worker 数（环节 9：动态扩容后可能 > num_workers）
-    [[nodiscard]] std::size_t active_workers() const {
-        std::lock_guard<std::mutex> lock(worker_mutex_);
-        return workers_.size();
+    // 当前活跃 Worker 数（环节 9/10：扩容 > num_workers，缩容 < 上限）
+    // 语义 = "正在服役的线程数"：扩容后增加、空闲退役后减少、
+    // shutdown 后归 0。内部读原子计数（不用锁）。
+    [[nodiscard]] std::size_t active_workers() const noexcept {
+        return static_cast<std::size_t>(
+            live_workers_.load(std::memory_order_relaxed));
     }
 
     // 队列积压峰值（历史最大；submit 时采样）——背压设计依据
@@ -100,16 +108,24 @@ private:
     //   指针容器：Worker 对象地址永不移动，线程捕获的 this 恒有效。
     std::vector<std::unique_ptr<Worker>> workers_;
     mutable std::mutex worker_mutex_;      // 保护 workers_ 数组（扩容/遍历/join）
-    std::size_t num_workers_;              // 初始线程数（记录用）
+    std::size_t num_workers_;              // 初始线程数 = 核心线程数（记录用）
     std::size_t max_workers_;              // 扩容上限（0=不扩容）
     std::size_t auto_scale_threshold_;     // 自动扩容阈值（0=关闭）
+    std::chrono::milliseconds idle_timeout_;  // 空闲缩容超时（0=关闭）
+    std::atomic<int> live_workers_{0};     // 存活线程计数（构造+1，退出-1）
     std::size_t next_worker_id_ = 0;       // 下一个 worker 的 id（递增分配）
+    std::vector<int> free_ids_;            // 退役回收的空闲 id（扩容时复用）
     bool shutdown_done_ = false;           // 幂等标志：shutdown 只执行一次
 
     // 动态扩容（环节 9）：成功入队后检查积压，超阈值且未达上限
     // 则新增一个 worker。双重检查（先无锁看、再加锁复查）避免
     // 每次 submit 都抢锁。
     void maybe_grow();
+
+    // 回收退役 worker（环节 10）：遍历 workers_，把 retired() 的
+    // 线程 join + 从数组移除（否则退役对象一直占着数组位置）。
+    // 调用时机：submit 成功路径（与 maybe_grow 一起，低频）。
+    void reap_retired();
 };
 
 }  // namespace synapse::runtime

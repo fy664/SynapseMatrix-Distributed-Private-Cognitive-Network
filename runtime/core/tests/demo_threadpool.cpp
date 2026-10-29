@@ -107,10 +107,38 @@ int main() {
             scaling.submit(Task([] { std::this_thread::sleep_for(5ms); },
                                 "t" + std::to_string(i), Priority::Normal));
         }
-        scaling.shutdown();
+        // 注意：worker 数要在 shutdown 前采样（shutdown 后归 0）
         std::printf("\n=== 动态扩容演示 ===\n");
         std::printf("初始 1 worker，高峰自动扩容到 %zu 个，24+1 任务全部执行\n",
                     scaling.active_workers());
+        scaling.shutdown();
+    }
+
+    // ---- 动态缩容演示（环节 10）：空闲超时自动回收 worker ----
+    {
+        // 核心 1，上限 4，扩容阈值 4，空闲 150ms 退役
+        Executor elastic(1, 0ms, 2, 0, 4, 4, 150ms);
+        // 第一波高峰：占住 worker → 积压 → 自动扩容到 4
+        elastic.submit(Task([] { std::this_thread::sleep_for(60ms); },
+                            "occupy", Priority::High));
+        for (int i = 0; i < 30; ++i) {
+            elastic.submit(Task([] { std::this_thread::sleep_for(4ms); },
+                                "t" + std::to_string(i), Priority::Normal));
+        }
+        std::printf("\n=== 动态缩容演示 ===\n");
+        std::printf("高峰 worker=%zu\n", elastic.active_workers());
+        // 任务跑完后空闲 150ms → 自动缩回核心 1 个
+        std::this_thread::sleep_for(600ms);
+        std::printf("空闲后 worker=%zu（缩回核心）\n", elastic.active_workers());
+        // 第二波高峰：再扩回来（弹性闭环）
+        elastic.submit(Task([] { std::this_thread::sleep_for(60ms); },
+                            "occupy2", Priority::High));
+        for (int i = 0; i < 30; ++i) {
+            elastic.submit(Task([] { std::this_thread::sleep_for(4ms); },
+                                "u" + std::to_string(i), Priority::Normal));
+        }
+        std::printf("再入高峰 worker=%zu（又扩回）\n", elastic.active_workers());
+        elastic.shutdown();
     }
     return 0;
 }

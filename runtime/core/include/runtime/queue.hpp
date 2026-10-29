@@ -160,34 +160,37 @@ public:
         if (queue_.empty()) {
             return std::nullopt;   // 关闭且空：告诉调用方"结束"
         }
+        return take_head_locked(); // 公共取任务逻辑（含老化扫描）
+    }
 
-        // 老化扫描（老化启用时）：遍历全部任务，超龄的提升、
-        // 重置计时（提升后重新计时，防止同一任务连续霸占队首）
-        if (aging_interval_.count() > 0) {
-            const auto now = std::chrono::steady_clock::now();
-            for (auto it = queue_.begin(); it != queue_.end();) {
-                Entry e = *it;                      // 拷贝（节点式容器）
-                const auto waited = now - e.enqueue_time;
-                if (waited >= aging_interval_) {
-                    it = queue_.erase(it);          // 删除并取下一个迭代器
-                    // 每满一个间隔 +1 级；封顶 aging_max_boost_
-                    //（防无限抬升，也防比较器溢出）
-                    const auto steps = static_cast<int>(waited / aging_interval_);
-                    e.boost = std::min(e.boost + steps, aging_max_boost_);
-                    e.enqueue_time = now;           // 本轮提升后重新计时
-                    queue_.insert(std::move(e));    // 以新键重插（O(log n)）
-                } else {
-                    ++it;
-                }
-            }
+    // 带超时的取任务（环节 10：动态缩容的"空闲检测"）。
+    //   - 超时内取到任务 → 返回任务
+    //   - 等待超时（timeout 毫秒仍无货且未关闭）→ nullopt（空闲信号）
+    //   - 队列关闭且空 → nullopt（结束信号，用 is_closed() 区分）
+    // Worker 循环这样用：
+    //   auto t = queue_.pop_wait(idle_timeout);
+    //   if (t) { 执行; }
+    //   else if (queue_.is_closed()) break;   // 关闭 → 下班
+    //   else { 空闲超时 → 决定是否退役 }
+    std::optional<Task> pop_wait(std::chrono::milliseconds timeout) {
+        std::unique_lock<std::mutex> lock(mutex_);
+        // wait_for 谓词与 wait 相同；超时返回 false = "空闲"
+        if (!cv_.wait_for(lock, timeout, [this] {
+                return !queue_.empty() || closed_;
+            })) {
+            return std::nullopt;   // 超时无货（未关闭）→ 空闲信号
         }
+        if (queue_.empty()) {
+            return std::nullopt;   // 关闭且空：结束信号
+        }
+        return take_head_locked();
+    }
 
-        // 取最优先：begin() 是"有效优先级最高 + seq 最小"的任务
-        Task t = queue_.begin()->task;
-        queue_.erase(queue_.begin());
-        // 出队腾出一个空位 → 唤醒一个等待"有空位"的阻塞生产者
-        cv_space_.notify_one();
-        return t;
+    // 队列是否已关闭（Worker 区分 pop_wait 的 nullopt 是
+    // "空闲超时"还是"关闭结束"时用）
+    [[nodiscard]] bool is_closed() const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return closed_;
     }
 
     // ---- 管理侧 ----
@@ -240,6 +243,38 @@ private:
     std::chrono::milliseconds aging_interval_; // 老化间隔（0=禁用）
     int aging_max_boost_;           // 老化提升上限
     std::size_t max_capacity_;      // 有界队列容量（0=无限制，背压阈值）
+
+    // 公共取任务逻辑（pop / pop_wait 共用）：调用方必须已持有 mutex_
+    // 且确认队列非空。内含老化扫描 + 取最优先任务 + 唤醒阻塞生产者。
+    std::optional<Task> take_head_locked() {
+        // 老化扫描（老化启用时）：遍历全部任务，超龄的提升、
+        // 重置计时（提升后重新计时，防止同一任务连续霸占队首）
+        if (aging_interval_.count() > 0) {
+            const auto now = std::chrono::steady_clock::now();
+            for (auto it = queue_.begin(); it != queue_.end();) {
+                Entry e = *it;                      // 拷贝（节点式容器）
+                const auto waited = now - e.enqueue_time;
+                if (waited >= aging_interval_) {
+                    it = queue_.erase(it);          // 删除并取下一个迭代器
+                    // 每满一个间隔 +1 级；封顶 aging_max_boost_
+                    //（防无限抬升，也防比较器溢出）
+                    const auto steps = static_cast<int>(waited / aging_interval_);
+                    e.boost = std::min(e.boost + steps, aging_max_boost_);
+                    e.enqueue_time = now;           // 本轮提升后重新计时
+                    queue_.insert(std::move(e));    // 以新键重插（O(log n)）
+                } else {
+                    ++it;
+                }
+            }
+        }
+
+        // 取最优先：begin() 是"有效优先级最高 + seq 最小"的任务
+        Task t = queue_.begin()->task;
+        queue_.erase(queue_.begin());
+        // 出队腾出一个空位 → 唤醒一个等待"有空位"的阻塞生产者
+        cv_space_.notify_one();
+        return t;
+    }
 };
 
 }  // namespace synapse::runtime

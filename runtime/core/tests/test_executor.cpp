@@ -130,8 +130,8 @@ TEST(Executor, NoGrowWhenBacklogLow) {
     for (int i = 0; i < 5; ++i) {
         ex.submit(Task([] {}, "t" + std::to_string(i)));
     }
+    EXPECT(ex.active_workers() == 2);            // shutdown 前未扩容
     ex.shutdown();
-    EXPECT(ex.active_workers() == 2);            // 未触发扩容
 }
 
 // 8. 默认关闭自动扩容（回归：老行为不变）
@@ -141,8 +141,8 @@ TEST(Executor, NoGrowByDefault) {
         ex.submit(Task([] { std::this_thread::sleep_for(1ms); },
                        "t" + std::to_string(i)));
     }
+    EXPECT(ex.active_workers() == 2);            // shutdown 前 worker 数不变
     ex.shutdown();
-    EXPECT(ex.active_workers() == 2);            // worker 数不变
 }
 
 // 9. 扩容到上限后停止：积压再高也不会超过 max_workers
@@ -155,7 +155,70 @@ TEST(Executor, GrowStopsAtMax) {
     // 快速提交 200 个，扩容最多到 3
     EXPECT(ex.active_workers() <= 3);
     ex.shutdown();
-    EXPECT(ex.active_workers() == 3);            // 实际扩满到上限
+    // 新语义：shutdown 后所有 worker 退出，存活计数归 0
+    EXPECT(ex.active_workers() == 0);
+}
+
+// ---- 动态缩容（Month 3 环节 10）----
+
+// 10. 空闲超时自动退役：忙时扩到上限，闲时缩回核心数
+TEST(Executor, ShrinkOnIdleTimeout) {
+    // 核心 1，上限 3，扩容阈值 2，空闲 100ms 退役
+    Executor ex(1, 0ms, 2, 0, 3, 2, 100ms);
+    // 占住唯一的 worker → 制造积压 → 触发扩容到 3
+    ex.submit(Task([] { std::this_thread::sleep_for(50ms); }, "occupy"));
+    for (int i = 0; i < 20; ++i) {
+        ex.submit(Task([] {}, "t" + std::to_string(i)));
+    }
+    EXPECT(ex.active_workers() == 3);            // 高峰 3 个
+    // 全部任务跑完，worker 空闲 100ms 后逐个退役
+    std::this_thread::sleep_for(300ms);
+    EXPECT(ex.active_workers() == 1);            // 缩回核心 1 个
+    ex.shutdown();
+}
+
+// 11. 不会缩到核心数以下（CAS 抢名额保证）
+TEST(Executor, NeverShrinkBelowCore) {
+    // 核心 2（默认上限 2），空闲 50ms
+    Executor ex(2, 0ms, 2, 0, 0, 0, 50ms);
+    std::this_thread::sleep_for(200ms);          // 远超空闲超时
+    EXPECT(ex.active_workers() == 2);            // 核心线程常驻
+    ex.shutdown();
+}
+
+// 12. 默认（idle_timeout=0）空闲不退役：回归老行为
+TEST(Executor, NoShrinkByDefault) {
+    // 开启扩容（扩到 4）但不开启缩容
+    Executor ex(1, 0ms, 2, 0, 4, 3, 0ms);
+    ex.submit(Task([] { std::this_thread::sleep_for(50ms); }, "occupy"));
+    for (int i = 0; i < 20; ++i) {
+        ex.submit(Task([] {}, "t" + std::to_string(i)));
+    }
+    EXPECT(ex.active_workers() == 4);            // 已扩容到上限
+    std::this_thread::sleep_for(200ms);          // 长时间空闲
+    EXPECT(ex.active_workers() == 4);            // 不退役
+    ex.shutdown();
+}
+
+// 13. 缩容后再扩容：空闲回收，忙时再拉起（弹性闭环）
+TEST(Executor, ShrinkThenGrowAgain) {
+    Executor ex(1, 0ms, 2, 0, 3, 2, 80ms);
+    // 第一波高峰：扩到 3
+    ex.submit(Task([] { std::this_thread::sleep_for(50ms); }, "occupy1"));
+    for (int i = 0; i < 20; ++i) {
+        ex.submit(Task([] {}, "a" + std::to_string(i)));
+    }
+    EXPECT(ex.active_workers() == 3);
+    // 空闲后缩回 1
+    std::this_thread::sleep_for(250ms);
+    EXPECT(ex.active_workers() == 1);
+    // 第二波高峰：再次扩容
+    ex.submit(Task([] { std::this_thread::sleep_for(50ms); }, "occupy2"));
+    for (int i = 0; i < 20; ++i) {
+        ex.submit(Task([] {}, "b" + std::to_string(i)));
+    }
+    EXPECT(ex.active_workers() == 3);            // 又扩回来了
+    ex.shutdown();
 }
 
 TEST_MAIN()

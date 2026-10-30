@@ -15,11 +15,13 @@
 
 #include "runtime/executor.hpp"
 #include "runtime/task.hpp"
+#include "runtime/work_stealing.hpp"
 
 using namespace std::chrono_literals;
 using synapse::runtime::Executor;
 using synapse::runtime::Priority;
 using synapse::runtime::Task;
+using synapse::runtime::WorkStealingPool;
 
 int main() {
     constexpr int kWorkers = 2;
@@ -139,6 +141,27 @@ int main() {
         }
         std::printf("再入高峰 worker=%zu（又扩回）\n", elastic.active_workers());
         elastic.shutdown();
+    }
+
+    // ---- Work-Stealing 演示（环节 11）：亲和性提交 + 偷取 ----
+    {
+        WorkStealingPool pool(4);
+        // 亲和性提交：全部塞给 worker 0（模拟"提交方偏爱某队列"）
+        for (int i = 0; i < 30; ++i) {
+            pool.submit_to(0, Task([] { std::this_thread::sleep_for(3ms); },
+                                   "aff" + std::to_string(i)));
+        }
+        pool.shutdown();
+        std::printf("\n=== Work-Stealing 演示 ===\n");
+        std::printf("30 个任务全塞 worker0，各 worker 执行分布：\n");
+        std::size_t total_stolen = 0;
+        for (std::size_t w = 0; w < pool.num_workers(); ++w) {
+            std::printf("  worker%zu: 执行 %zu，偷取 %zu\n", w,
+                        pool.executed(w), pool.stolen(w));
+            total_stolen += pool.stolen(w);
+        }
+        std::printf("总执行 %zu，总偷取 %zu（负载均衡生效）\n",
+                    pool.total_executed(), total_stolen);
     }
     return 0;
 }

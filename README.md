@@ -124,7 +124,8 @@ runtime/build/Release/demo_threadpool.exe # 演示：优先级插队 + 并发执
 - [x] 2026-10-27 Month 3 环节 8：阻塞式背压（push_wait 满则等 + 超时，双条件变量 = empty/full 信号量，+6 单测，46 全过）
 - [x] 2026-10-28 Month 3 环节 9：动态扩容（积压超阈值自动加 worker，监控→治理闭环，+4 单测，50 全过）
 - [x] 2026-10-29 Month 3 环节 10：动态缩容（空闲超时自动退役，CAS 抢名额不缩到核心以下，id 复用防越界，+4 单测，54 全过）
-- [ ] Month 3：Work-Stealing / 急停
+- [x] 2026-10-30 Month 3 环节 11：Work-Stealing（多队列负载均衡：每 worker 本地队列 + 空则偷别家队尾，亲和性提交制造不均，+7 单测，61 全过）
+- [ ] Month 3：无锁本地队列 / 急停
 
 ## 学习执行模式
 

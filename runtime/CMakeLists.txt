@@ -30,6 +30,7 @@ add_library(synapse_core STATIC
     core/src/queue.cpp
     core/src/worker.cpp
     core/src/executor.cpp
+    core/src/work_stealing.cpp
 )
 
 target_include_directories(synapse_core PUBLIC core/include)
@@ -61,6 +62,11 @@ add_test(NAME test_telemetry COMMAND test_telemetry)
 add_executable(test_priority core/tests/test_priority.cpp)
 target_link_libraries(test_priority PRIVATE synapse_core)
 add_test(NAME test_priority COMMAND test_priority)
+
+# 单测：Work-Stealing 多队列线程池（Month 3 环节 11）
+add_executable(test_work_stealing core/tests/test_work_stealing.cpp)
+target_link_libraries(test_work_stealing PRIVATE synapse_core)
+add_test(NAME test_work_stealing COMMAND test_work_stealing)
 
 # 演示：Executor 驱动的多线程 Task Runtime
 add_executable(demo_threadpool core/tests/demo_threadpool.cpp)

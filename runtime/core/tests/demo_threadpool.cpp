@@ -163,5 +163,37 @@ int main() {
         std::printf("总执行 %zu，总偷取 %zu（负载均衡生效）\n",
                     pool.total_executed(), total_stolen);
     }
+
+    // ---- 急停演示（环节 12）：丢弃排队任务，立即停止 ----
+    {
+        Executor ex(2);
+        std::atomic<bool> slow_started{false};
+        std::atomic<int> done{0};
+        // 慢任务（300ms）占住一个 worker
+        ex.submit(Task([&] {
+            slow_started.store(true);
+            std::this_thread::sleep_for(300ms);
+            done.fetch_add(1);
+        }, "slow"));
+        // 20 个排队任务
+        for (int i = 0; i < 20; ++i) {
+            ex.submit(Task([&] { done.fetch_add(1); },
+                           "queued" + std::to_string(i)));
+        }
+        while (!slow_started.load()) {
+            std::this_thread::yield();
+        }
+        const auto stop_begin = std::chrono::steady_clock::now();
+        ex.stop();   // 急停：不等 20 个排队任务
+        const auto stop_ms = std::chrono::duration_cast<
+            std::chrono::milliseconds>(std::chrono::steady_clock::now() -
+                                       stop_begin)
+                                .count();
+        std::printf("\n=== 急停演示 ===\n");
+        std::printf("排队 20 个任务，急停耗时 %lldms，执行 %d 个（丢弃 %d）\n",
+                    static_cast<long long>(stop_ms), done.load(),
+                    20 - done.load());
+        std::printf("（正在执行的慢任务不可抢占，必须等它跑完）\n");
+    }
     return 0;
 }

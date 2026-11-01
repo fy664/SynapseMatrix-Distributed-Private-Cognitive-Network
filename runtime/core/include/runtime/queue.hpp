@@ -204,6 +204,23 @@ public:
         cv_space_.notify_all(); // 唤醒阻塞生产者：让它们超时/退出
     }
 
+    // 急停（环节 12）：关闭 + 丢弃所有未执行任务。
+    // 与 close()（优雅）的区别：
+    //   close 保留已入队任务，Worker 消费完队列才自然退出（优雅停机）；
+    //   stop 立刻清空队列——Worker 被唤醒后发现"队列空 + 已关闭"，
+    //   pop 返回 nullopt → 直接退出，不再消费任何排队任务。
+    // 对应 408 进程控制：正常终止（退出后清收）vs 撤销/异常终止
+    //（立即回收资源、丢弃未完成工作）。
+    void stop() {
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            closed_ = true;
+            queue_.clear();    // 丢弃全部未执行任务（multiset 整体清空）
+        }
+        cv_.notify_all();      // 唤醒等待中的 Worker：看到空+关闭 → 退出
+        cv_space_.notify_all(); // 唤醒阻塞生产者：让它们超时/退出
+    }
+
     // 当前队列长度（调试/Telemetry 用；注意锁外看会有竞态，仅近似）
     [[nodiscard]] std::size_t size() const {
         std::lock_guard<std::mutex> lock(mutex_);

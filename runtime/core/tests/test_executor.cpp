@@ -221,4 +221,82 @@ TEST(Executor, ShrinkThenGrowAgain) {
     ex.shutdown();
 }
 
+// ---- 急停（Month 3 环节 12）----
+
+// 14. 急停丢弃排队任务：正在执行的任务跑完，排队的不执行
+TEST(Executor, StopDiscardsPendingTasks) {
+    Executor ex(1);                               // 单 worker：谁在跑谁占住
+    std::atomic<int> done{0};
+    std::atomic<bool> slow_started{false};
+    // 慢任务占住唯一的 worker（200ms），开始时置位启动事件
+    ex.submit(Task([&] {
+        slow_started.store(true);
+        std::this_thread::sleep_for(200ms);
+        done.fetch_add(1);
+    }, "slow"));
+    // 50 个排队任务（本应被执行；stop 后全部丢弃）
+    for (int i = 0; i < 50; ++i) {
+        ex.submit(Task([&] { done.fetch_add(1); },
+                       "queued" + std::to_string(i)));
+    }
+    // 等慢任务确实开始执行（此时 worker 被占住，50 个仍在队列）
+    while (!slow_started.load()) {
+        std::this_thread::yield();
+    }
+    // 慢任务还在跑、50 个还在排队时急停
+    ex.stop();
+    // stop 返回后：慢任务跑完（不可抢占），排队任务一个没执行
+    EXPECT(done.load() == 1);
+    // 急停后所有 worker 已退出（存活计数归 0，同 shutdown）
+    EXPECT(ex.active_workers() == 0);
+}
+
+// 15. 急停与优雅停机幂等互斥：先 stop 后 shutdown / 先 shutdown 后 stop
+TEST(Executor, StopAndShutdownIdempotent) {
+    // 场景 A：先 stop 再 shutdown
+    {
+        Executor ex(2);
+        ex.submit(Task([] {}));
+        ex.stop();
+        ex.shutdown();                            // 第二次：无操作
+        EXPECT(ex.active_workers() == 0);
+    }
+    // 场景 B：先 shutdown 再 stop
+    {
+        Executor ex(2);
+        ex.submit(Task([] {}));
+        ex.shutdown();
+        ex.stop();                                // 第二次：无操作
+        EXPECT(ex.active_workers() == 0);
+    }
+}
+
+// 16. 急停后 submit 拒绝
+TEST(Executor, SubmitAfterStopRejected) {
+    Executor ex(2);
+    ex.stop();
+    bool ok = ex.submit(Task([] {}));
+    EXPECT(!ok);
+    EXPECT(ex.telemetry().rejected() >= 1);        // 拒绝被记录（可观测性）
+}
+
+// 17. 急停不打断正在执行的任务（线程不可抢占的物理下限）
+TEST(Executor, StopAllowsRunningTaskToFinish) {
+    Executor ex(1);                               // 单 worker：唯一在跑的
+    std::atomic<int> finished{0};
+    std::atomic<bool> started{false};
+    ex.submit(Task([&] {
+        started.store(true);
+        std::this_thread::sleep_for(100ms);       // 慢任务
+        finished.fetch_add(1);
+    }, "running"));
+    // 等任务确实开始执行（否则 stop 可能把它也当作排队任务丢弃）
+    while (!started.load()) {
+        std::this_thread::yield();
+    }
+    // 正在执行时立即急停——不能打断它，必须等它跑完
+    ex.stop();
+    EXPECT(finished.load() == 1);                  // 跑完了
+}
+
 TEST_MAIN()

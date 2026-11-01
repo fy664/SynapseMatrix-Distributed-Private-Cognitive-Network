@@ -78,6 +78,13 @@ public:
     // 幂等：可多次调用（第二次起无操作）
     void shutdown();
 
+    // 急停（环节 12）：立即停止——丢弃队列中所有未执行任务，
+    // 等待正在执行的任务跑完（线程不可抢占，C++ 无协作式中断；
+    // Java Thread.stop() 同样已废弃，这是线程模型的物理限制）。
+    // 与 shutdown 互斥且幂等：先 stop 后 shutdown / 先 shutdown
+    // 后 stop，第二次调用均为无操作（共用 shutdown_done_ 标志）。
+    void stop();
+
     // 当前队列积压（Telemetry/调试）
     [[nodiscard]] std::size_t pending() const { return queue_.size(); }
 

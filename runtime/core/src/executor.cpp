@@ -178,4 +178,25 @@ void Executor::shutdown() {
     }
 }
 
+void Executor::stop() {
+    // 急停（环节 12）：立即停止。
+    // 与 shutdown 共用幂等标志：无论先调哪个，第二次都是无操作。
+    if (shutdown_done_) {
+        return;
+    }
+    shutdown_done_ = true;
+
+    queue_.stop();            // 1. 关闭 + 清空队列：排队任务全部丢弃
+    // 2. 等 Worker 退出：队列空 + 关闭 → pop 返回 nullopt → 退出。
+    //    正在执行的任务无法打断（线程不可抢占）——让它跑完，
+    //    这是"急停"的物理下限（对应 408：撤销进程前必须先
+    //    回收其资源，但 CPU 上正在跑的指令流只能等它结束）。
+    std::lock_guard<std::mutex> lock(worker_mutex_);
+    for (auto& wp : workers_) {
+        if (wp) {
+            wp->join();
+        }
+    }
+}
+
 }  // namespace synapse::runtime

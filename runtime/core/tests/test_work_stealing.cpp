@@ -136,4 +136,37 @@ TEST(WorkStealing, ConcurrentSubmitNoLoss) {
     EXPECT(done.load() == kTotal);               // 无丢失
 }
 
+// 8. 无锁队列高竞争压力：8 worker × 8 生产者 × 100 任务 = 800，
+//    验证 Vyukov 环形队列在"多生产者 + 多消费者同时 CAS"下无丢失、
+//    无重复执行（每个任务恰好执行一次）。
+//    这是环节 13 无锁化的正确性验证：任务体各自 +1 到一个共享计数，
+//    若不是恰好执行一次（丢失或重复），计数 != 800。
+TEST(WorkStealing, NoLossUnderHeavyContention) {
+    constexpr std::size_t kWorkers = 8;
+    constexpr int kProducers = 8;
+    constexpr int kPerProducer = 100;
+    constexpr int kTotal = kProducers * kPerProducer;
+    std::atomic<int> done{0};
+    {
+        WorkStealingPool pool(kWorkers);
+        std::vector<std::thread> producers;
+        for (int p = 0; p < kProducers; ++p) {
+            producers.emplace_back([&, p] {
+                for (int i = 0; i < kPerProducer; ++i) {
+                    // 每任务耗时极短（几百纳秒）：制造"消费速度追不上
+                    // 生产"的高竞争窗口，压力集中在无锁队列的 CAS 上
+                    pool.submit(Task([&] { done.fetch_add(1); },
+                                     "h" + std::to_string(p) + "-" +
+                                         std::to_string(i)));
+                }
+            });
+        }
+        for (auto& th : producers) {
+            th.join();
+        }
+        pool.shutdown();
+    }
+    EXPECT(done.load() == kTotal);               // 恰好执行 800 次
+}
+
 TEST_MAIN()

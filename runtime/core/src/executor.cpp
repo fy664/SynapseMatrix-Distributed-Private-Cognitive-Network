@@ -78,8 +78,7 @@ Executor::~Executor() {
     shutdown();  // RAII：栈上 Executor 销毁即回收全部线程
 }
 
-bool Executor::submit(Task task) {
-    // 环节 14：未携带令牌的任务自动挂上本 Executor 的令牌——
+bool Executor::submit(Task task) {    // 环节 14：未携带令牌的任务自动挂上本 Executor 的令牌——
     // 这样 request_stop() 的广播能覆盖所有经由此池提交的任务。
     if (!task.has_token()) {
         task.attach_token(stop_token_);
@@ -98,6 +97,21 @@ bool Executor::submit(Task task) {
         telemetry_.record_rejected();  // 被拒计数（可观测性）
     }
     return accepted;
+}
+
+TaskHandle Executor::submit_handle(Task task) {
+    // 环节 15：创建共享完成状态 → 绑到任务 → 复用 submit 的全部逻辑
+    //（令牌补挂、水位采样、扩容/回收、拒绝计数都在 submit 里，不重复实现）
+    auto completion = std::make_shared<TaskCompletion>();
+    task.attach_completion(completion);   // 先绑句柄再提交（任务结束时写回）
+    TaskHandle handle(completion);
+    if (!submit(std::move(task))) {
+        // 未入队 → 句柄立刻就绪为 Rejected。
+        // 必须在这里补写结果：否则调用方 wait() 会永远等一个
+        // 永远不会有人执行的任务（句柄"假活"）。
+        completion->complete(TaskOutcome::Rejected);
+    }
+    return handle;
 }
 
 bool Executor::push_wait(Task task, std::chrono::milliseconds timeout) {

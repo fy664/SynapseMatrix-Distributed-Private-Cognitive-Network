@@ -14,6 +14,7 @@
 #include "test_framework.hpp"
 
 #include <atomic>
+#include <stdexcept>
 #include <thread>
 #include <vector>
 
@@ -23,6 +24,7 @@ using namespace std::chrono_literals;
 using synapse::runtime::Executor;
 using synapse::runtime::Priority;
 using synapse::runtime::Task;
+using synapse::runtime::TaskOutcome;
 
 // 1. 提交 N 个任务全部执行
 TEST(Executor, AllTasksExecuted) {
@@ -394,6 +396,62 @@ TEST(Executor, StopSignalsRunningTaskToExitEarly) {
         std::chrono::steady_clock::now() - t0);
     EXPECT(cancelled.load());                        // 任务体提前退出
     EXPECT(elapsed.count() < 300);                   // 不再等满载 1000ms
+}
+
+// 23. 句柄：任务正常完成后 wait() 返回 Done（环节 15）
+TEST(Executor, HandleDoneAfterExecution) {
+    Executor ex(2);
+    std::atomic<int> value{0};
+    auto handle = ex.submit_handle(Task([&] { value.store(42); }, "h"));
+    EXPECT(handle.valid());
+    EXPECT(handle.wait() == TaskOutcome::Done);   // 阻塞等到完成
+    EXPECT(value.load() == 42);
+    ex.shutdown();
+}
+
+// 24. 句柄：被协作式取消跳过的任务 → Skipped（不会永久挂住等待者）
+TEST(Executor, HandleSkippedAfterRequestStop) {
+    Executor ex(1);
+    ex.request_stop();                            // 先广播停止
+    auto handle = ex.submit_handle(Task([] {}, "skip"));
+    EXPECT(handle.wait() == TaskOutcome::Skipped);
+    ex.shutdown();
+}
+
+// 25. 句柄：提交到已关闭的池 → 立刻就绪为 Rejected
+TEST(Executor, HandleRejectedAfterShutdown) {
+    Executor ex(1);
+    ex.shutdown();
+    auto handle = ex.submit_handle(Task([] {}, "rej"));
+    EXPECT(handle.wait() == TaskOutcome::Rejected);
+}
+
+// 26. 句柄：wait_for 超时返回 false，任务完成后再次等待成功
+TEST(Executor, HandleWaitForTimeout) {
+    Executor ex(1);
+    auto handle = ex.submit_handle(Task(
+        [] { std::this_thread::sleep_for(100ms); }, "slow"));
+    EXPECT(!handle.wait_for(30ms));               // 30ms 时还没完成
+    EXPECT(handle.state() == TaskOutcome::Pending);
+    EXPECT(handle.wait() == TaskOutcome::Done);   // 再等：完成
+    EXPECT(handle.wait_for(30ms));                // 已就绪：立即返回 true
+    ex.shutdown();
+}
+
+// 27. 异常安全：任务体抛异常被捕获 → Failed，线程存活，后续任务照常执行
+TEST(Executor, ExceptionTaskMarkedFailedAndPoolSurvives) {
+    Executor ex(1);
+    auto failed_handle = ex.submit_handle(Task(
+        [] { throw std::runtime_error("boom"); }, "boom"));
+    EXPECT(failed_handle.wait() == TaskOutcome::Failed);
+    EXPECT(ex.telemetry().failed() == 1);         // 失败单独计数
+    EXPECT(ex.telemetry().tasks_done() == 0);     // 失败不算执行
+    // 线程没有因异常退出：下一个任务仍能正常跑完
+    std::atomic<bool> ran{false};
+    auto ok_handle = ex.submit_handle(Task([&] { ran.store(true); }, "ok"));
+    EXPECT(ok_handle.wait() == TaskOutcome::Done);
+    EXPECT(ran.load());
+    ex.shutdown();
 }
 
 TEST_MAIN()

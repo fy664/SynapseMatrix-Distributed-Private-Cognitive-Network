@@ -18,6 +18,12 @@
 //     2. 执行中自查：任务体内的长循环调用 should_stop()，
 //        看到停止请求就提前 return（协作式取消的唯一安全做法）。
 //
+// 环节 15（2026-11-10）：结果回传
+//   Task 可绑定 TaskCompletion（共享完成状态）。执行结束把
+//   Done / Skipped / Failed 写回，调用方通过 TaskHandle 等待。
+//   同时补上异常安全：任务体抛异常被捕获并记为 Failed，
+//   不再穿出线程入口导致 std::terminate。
+//
 // 语法讲解（C++20）：
 //   - std::function<void()>：可调用对象容器，类似"函数指针的泛化版"
 //   - [[nodiscard]]：调用方必须使用返回值，否则编译警告
@@ -33,6 +39,7 @@
 #include <utility>
 
 #include "runtime/stop_token.hpp"
+#include "runtime/task_handle.hpp"
 
 namespace synapse::runtime {
 
@@ -58,16 +65,35 @@ public:
           stop_token_(std::move(token)) {}
 
     // 执行任务体，返回"是否真的执行了"：
-    //   true  = 正常执行完毕
-    //   false = 被协作式取消跳过（令牌已置位），或任务体为空
+    //   true  = 正常执行完毕（或空任务，视为完成）
+    //   false = 被协作式取消跳过（令牌已置位），或任务体抛异常
     // 跳过逻辑放在这里而不是 Worker 里：任何持有 Task 的地方
     // （Worker / WorkStealingPool / 后续自定义执行器）都自动获得
     // 同一套取消语义，不需要各自重复判断。
+    //
+    // 环节 15（2026-11-10）：结果回传 + 异常安全
+    //   - 若绑定了完成句柄（Executor::submit_handle），执行结束把
+    //     Done/Skipped/Failed 写回句柄，等待者据此唤醒
+    //   - 任务体抛异常时捕获（catch ...），标记 Failed 并返回 false：
+    //     否则异常会穿出线程入口 → std::terminate，整个进程退出。
+    //     吞掉异常是线程池的常见取舍（Java 线程池同理：异常被
+    //     包裹进 Future）。调用方通过句柄状态得知失败。
     [[nodiscard]] bool run() {
-        if (!work_ || should_stop()) {
-            return false;          // 空任务 / 已请求停止 → 不执行
+        if (should_stop()) {                   // 取消优先于一切
+            complete(TaskOutcome::Skipped);
+            return false;
         }
-        work_();
+        if (!work_) {                          // 空任务：直接视为完成
+            complete(TaskOutcome::Done);
+            return true;
+        }
+        try {
+            work_();
+        } catch (...) {                        // 任何异常都不让它穿出线程
+            complete(TaskOutcome::Failed);
+            return false;
+        }
+        complete(TaskOutcome::Done);
         return true;
     }
 
@@ -92,14 +118,42 @@ public:
     // 使"运行时级别的停止请求"能广播到全部任务
     void attach_token(StopTokenPtr token) { stop_token_ = std::move(token); }
 
+    // 是否已绑定完成句柄
+    [[nodiscard]] bool has_completion() const noexcept {
+        return static_cast<bool>(completion_);
+    }
+
+    // 绑定完成状态：Executor::submit_handle 在提交前调用，
+    // 任务结束（完成/跳过/失败）时由 run() 写回结果唤醒等待者
+    void attach_completion(TaskCompletionPtr completion) {
+        completion_ = std::move(completion);
+    }
+
     [[nodiscard]] const std::string& id() const noexcept { return id_; }
     [[nodiscard]] Priority priority() const noexcept { return priority_; }
 
+    // 最近一次执行的结果（run 之前为 Pending）：
+    // Worker 据此区分"被取消跳过"与"任务体抛异常"——
+    // 两者 run() 都返回 false，但统计口径不同。
+    [[nodiscard]] TaskOutcome last_outcome() const noexcept {
+        return last_outcome_;
+    }
+
 private:
+    // 把结果写回句柄（无句柄时什么也不做），同时记录本地结果
+    void complete(TaskOutcome outcome) {
+        last_outcome_ = outcome;
+        if (completion_) {
+            completion_->complete(outcome);
+        }
+    }
+
     std::function<void()> work_;   // 类型擦除的可调用体
     std::string id_;               // 任务标识（Telemetry 用）
     Priority priority_;            // 优先级（V1 记录，V2 生效）
     StopTokenPtr stop_token_;      // 协作式取消令牌（可空 = 不参与取消）
+    TaskCompletionPtr completion_; // 完成句柄的共享状态（可空 = 不关心结果）
+    TaskOutcome last_outcome_ = TaskOutcome::Pending;  // 最近一次执行结果
 };
 
 }  // namespace synapse::runtime

@@ -21,6 +21,7 @@ using namespace std::chrono_literals;
 using synapse::runtime::Executor;
 using synapse::runtime::Priority;
 using synapse::runtime::Task;
+using synapse::runtime::TaskOutcome;
 using synapse::runtime::WorkStealingPool;
 
 int main() {
@@ -230,6 +231,51 @@ int main() {
                     static_cast<long long>(coop_ms), finished.load(),
                     cancelled.load(), ex.telemetry().skipped());
         std::printf("（任务体在安全点自查 → 秒级收尾；对比急停只能等指令跑完）\n");
+    }
+
+    // ---- 任务句柄演示（环节 15）：等结果 / 带超时等 / 失败可见 ----
+    {
+        Executor ex(2);
+        std::atomic<int> sum{0};
+        // a. 正常任务：wait() 阻塞到完成
+        auto h1 = ex.submit_handle(Task([&] {
+            for (int i = 1; i <= 100; ++i) {
+                sum.fetch_add(i);          // 1+..+100 = 5050
+            }
+        }, "sum"));
+        // b. 慢任务：wait_for 超时 → 判"未完成"
+        auto h2 = ex.submit_handle(Task(
+            [] { std::this_thread::sleep_for(150ms); }, "slow"));
+        // c. 抛异常的任务：句柄状态 = Failed，线程不死
+        auto h3 = ex.submit_handle(Task(
+            [] { throw std::runtime_error("demo boom"); }, "boom"));
+
+        const auto outcome_name = [](TaskOutcome o) -> const char* {
+            switch (o) {
+                case TaskOutcome::Done: return "Done（完成）";
+                case TaskOutcome::Skipped: return "Skipped（取消跳过）";
+                case TaskOutcome::Failed: return "Failed（抛异常）";
+                case TaskOutcome::Rejected: return "Rejected（被拒）";
+                default: return "Pending（未完成）";
+            }
+        };
+
+        const bool timeout_hit = !h2.wait_for(50ms);   // 50ms 时慢任务还没完
+        const auto r1 = h1.wait();
+        const auto r2 = h2.wait();
+        const auto r3 = h3.wait();
+
+        std::printf("\n=== 任务句柄演示 ===\n");
+        std::printf("  h1 求和任务：wait() → %s，结果 sum=%d\n",
+                    outcome_name(r1), sum.load());
+        std::printf("  h2 慢任务：wait_for(50ms) %s；最终 → %s\n",
+                    timeout_hit ? "超时（判未完成）" : "立即完成",
+                    outcome_name(r2));
+        std::printf("  h3 抛异常任务：→ %s（异常被捕获，线程存活）\n",
+                    outcome_name(r3));
+        std::printf("  统计：完成 %zu、失败 %zu、拒绝 %zu\n",
+                    ex.telemetry().tasks_done(), ex.telemetry().failed(),
+                    ex.telemetry().rejected());
     }
     return 0;
 }

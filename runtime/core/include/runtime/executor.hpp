@@ -32,6 +32,7 @@
 #include "runtime/queue.hpp"
 #include "runtime/stop_token.hpp"
 #include "runtime/task.hpp"
+#include "runtime/task_handle.hpp"
 #include "runtime/telemetry.hpp"
 #include "runtime/worker.hpp"
 
@@ -70,6 +71,14 @@ public:
 
     // 提交任务：队列已关闭时返回 false（调用方可据实处理）
     bool submit(Task task);
+
+    // 提交任务并返回完成句柄（环节 15）：
+    //   调用方可以 handle.wait() 阻塞等结果，或 handle.wait_for(超时)。
+    //   被拒（队列关闭/满）时句柄立刻就绪为 Rejected——不会让调用方
+    //   永久等待一个从未入队的任务。
+    //   任务结束时的状态：Done 正常完成 / Skipped 被取消跳过 /
+    //   Failed 任务体抛异常（异常已被捕获，线程存活）/ Rejected 未入队。
+    TaskHandle submit_handle(Task task);
 
     // 阻塞式提交（环节 8）：队列满时等待空位，最多等 timeout；
     // 超时或已关闭返回 false。对应 408 生产者-消费者"满则等"。

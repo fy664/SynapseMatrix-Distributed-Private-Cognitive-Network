@@ -116,10 +116,16 @@ void Worker::run() {
         // 环节 14：run() 返回"是否真的执行了"——
         //   令牌已置位（协作式取消）→ 跳过任务体，只记 skipped，
         //   不计执行数与耗时（否则吞吐指标被人为抬高）。
+        // 环节 15：run() 返回 false 还有第二种原因——任务体抛异常
+        //   （异常已被 Task::run 捕获），据 last_outcome() 分别计数。
         // 用单调时钟测执行耗时（steady_clock 不受系统调时间影响）
         const auto start = std::chrono::steady_clock::now();
         if (!task->run()) {                      // 执行任务体（含取消判断）
-            telemetry_.record_skipped();         // 被取消 → 只记跳过
+            if (task->last_outcome() == TaskOutcome::Failed) {
+                telemetry_.record_failed();      // 任务体抛异常 → 失败计数
+            } else {
+                telemetry_.record_skipped();     // 被取消 → 跳过计数
+            }
             continue;
         }
         const auto elapsed = std::chrono::duration_cast<

@@ -63,6 +63,12 @@ public:
         skipped_.fetch_add(1);
     }
 
+    // 任务体抛异常（环节 15）时调用：异常已被运行时捕获，
+    // 单独计数让"失败率"可观测（否则会被误算成跳过）
+    void record_failed() {
+        failed_.fetch_add(1);
+    }
+
     // 队列水位采样：记录历史最大积压（峰值，单调不减）。
     // 调用时机：每次 submit 成功后（入队使队列变长，可能创新高）。
     // 无锁实现：CAS 循环更新 max——
@@ -107,6 +113,11 @@ public:
         return skipped_.load();
     }
 
+    // 任务体抛异常的任务数（环节 15）
+    [[nodiscard]] std::size_t failed() const noexcept {
+        return failed_.load();
+    }
+
     // 队列积压峰值（历史最大未消费任务数）——背压/容量规划依据
     [[nodiscard]] std::size_t peak_pending() const noexcept {
         return peak_pending_.load();
@@ -136,6 +147,7 @@ private:
     std::vector<std::atomic<std::size_t>> done_per_worker_;
     std::atomic<std::size_t> rejected_{0};           // 拒绝计数
     std::atomic<std::size_t> skipped_{0};            // 协取消跳过计数
+    std::atomic<std::size_t> failed_{0};             // 任务抛异常计数
     std::atomic<std::uint64_t> total_elapsed_us_{0}; // 总耗时（微秒）
     std::atomic<std::size_t> peak_pending_{0};       // 队列积压峰值
 };

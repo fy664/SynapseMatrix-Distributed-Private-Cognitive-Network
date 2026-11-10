@@ -177,11 +177,15 @@ void WorkStealingPool::worker_loop(std::size_t id) {
             }
         }
         if (task) {
+            // 环节 15：run() 内含取消判断与异常捕获；
+            // 被取消/抛异常 → 不执行、不计执行数（与 Executor 口径一致）
+            if (!task->run()) {
+                continue;
+            }
             if (stole) {
                 ++stolen_[id];        // 偷取计数（验证 Work-Stealing 发生）
             }
             ++executed_[id];
-            (*task)();                // 执行任务体
             continue;
         }
 

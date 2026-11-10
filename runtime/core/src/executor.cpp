@@ -79,6 +79,11 @@ Executor::~Executor() {
 }
 
 bool Executor::submit(Task task) {
+    // 环节 14：未携带令牌的任务自动挂上本 Executor 的令牌——
+    // 这样 request_stop() 的广播能覆盖所有经由此池提交的任务。
+    if (!task.has_token()) {
+        task.attach_token(stop_token_);
+    }
     // 转发给队列；队列已关闭（shutdown 后）push 返回 false
     const bool accepted = queue_.push(std::move(task));
     if (accepted) {
@@ -96,6 +101,10 @@ bool Executor::submit(Task task) {
 }
 
 bool Executor::push_wait(Task task, std::chrono::milliseconds timeout) {
+    // 环节 14：同上——阻塞式提交也补挂令牌
+    if (!task.has_token()) {
+        task.attach_token(stop_token_);
+    }
     // 阻塞式背压：满则等空位（超时返回 false）
     const bool accepted = queue_.push_wait(std::move(task), timeout);
     if (accepted) {
@@ -186,9 +195,12 @@ void Executor::stop() {
     }
     shutdown_done_ = true;
 
+    // 环节 14：先广播停止令牌——正在执行且自查的长任务可以提前
+    // 收尾返回；随后 queue_.stop() 丢弃排队任务。
+    request_stop();
     queue_.stop();            // 1. 关闭 + 清空队列：排队任务全部丢弃
     // 2. 等 Worker 退出：队列空 + 关闭 → pop 返回 nullopt → 退出。
-    //    正在执行的任务无法打断（线程不可抢占）——让它跑完，
+    //    未自查令牌的任务无法打断（线程不可抢占）——让它跑完，
     //    这是"急停"的物理下限（对应 408：撤销进程前必须先
     //    回收其资源，但 CPU 上正在跑的指令流只能等它结束）。
     std::lock_guard<std::mutex> lock(worker_mutex_);
@@ -197,6 +209,14 @@ void Executor::stop() {
             wp->join();
         }
     }
+}
+
+void Executor::request_stop() {
+    // 协作式取消（环节 14）：只置位令牌，不清队列、不 join、不等线程。
+    // 立即返回——调用方拿到控制权后可以自行决定"给多长宽限期"，
+    // 宽限期到了仍未结束再调 stop()（强制收摊）。
+    // 幂等：StopToken::request_stop 内部是 atomic store，重复调用无副作用。
+    stop_token_->request_stop();
 }
 
 }  // namespace synapse::runtime

@@ -127,7 +127,8 @@ runtime/build/Release/demo_threadpool.exe # 演示：优先级插队 + 并发执
 - [x] 2026-10-30 Month 3 环节 11：Work-Stealing（多队列负载均衡：每 worker 本地队列 + 空则偷别家队尾，亲和性提交制造不均，+7 单测，61 全过）
 - [x] 2026-11-01 Month 3 环节 12：急停（stop 丢弃排队任务立即停止，与优雅停机幂等互斥；正在执行任务不可抢占须跑完，+4 单测，65 全过）
 - [x] 2026-11-08 Month 3 环节 13：无锁本地队列（Vyukov MPMC 环形队列替代 mutex+deque，每槽 seq 版本号 + release/acquire 内存序，提交路径同步去锁，+1 高竞争压力单测，66 全过）
-- [ ] Month 3：双端无锁队列 / 协作式中断 / 统一线程池 API
+- [x] 2026-11-10 Month 3 环节 14：协作式中断（StopToken 共享令牌；Task::run 执行前跳过（计 skipped）+ 任务体安全点自查；stop() 同时广播令牌，+5 单测，71 全过）
+- [ ] Month 3：双端无锁队列 / 统一线程池 API / Future 语义
 
 ## 学习执行模式
 

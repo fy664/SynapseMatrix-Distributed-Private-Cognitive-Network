@@ -193,7 +193,43 @@ int main() {
         std::printf("排队 20 个任务，急停耗时 %lldms，执行 %d 个（丢弃 %d）\n",
                     static_cast<long long>(stop_ms), done.load(),
                     20 - done.load());
-        std::printf("（正在执行的慢任务不可抢占，必须等它跑完）\n");
+        std::printf("（未自查令牌的正在执行任务不可抢占，必须等它跑完）\n");
+    }
+
+    // ---- 协作式中断演示（环节 14）：任务自查令牌 → 提前收尾 ----
+    {
+        Executor ex(4);
+        const auto token = ex.token();   // 共享令牌（Executor 与全部任务共用）
+        std::atomic<int> finished{0};    // 完整跑完的任务数
+        std::atomic<int> cancelled{0};   // 自查后提前退出的任务数
+        // 8 个长任务：每任务 10 段 × 100ms = 满载 1000ms
+        for (int i = 0; i < 8; ++i) {
+            ex.submit(Task([&, token, i] {
+                for (int seg = 0; seg < 10; ++seg) {
+                    if (token->is_stop_requested()) {   // 每次安全点自查
+                        cancelled.fetch_add(1);
+                        return;                         // 协作式退出
+                    }
+                    std::this_thread::sleep_for(100ms);
+                }
+                finished.fetch_add(1);
+            }, "coop" + std::to_string(i)));
+        }
+        std::this_thread::sleep_for(250ms);   // 让任务跑到第 2~3 段
+        const auto coop_begin = std::chrono::steady_clock::now();
+        ex.request_stop();   // 只广播停止令牌：不清队列、不 join
+        ex.shutdown();       // 收尾（排队任务被 run() 跳过，运行中任务自查退出）
+        const auto coop_ms = std::chrono::duration_cast<
+            std::chrono::milliseconds>(std::chrono::steady_clock::now() -
+                                       coop_begin)
+                                .count();
+        std::printf("\n=== 协作式中断演示 ===\n");
+        std::printf("8 个长任务（满载各 1000ms），250ms 后广播停止：\n");
+        std::printf("  广播后耗时 %lldms，完整跑完 %d，自查提前退出 %d，"
+                    "排队被跳过 %zu\n",
+                    static_cast<long long>(coop_ms), finished.load(),
+                    cancelled.load(), ex.telemetry().skipped());
+        std::printf("（任务体在安全点自查 → 秒级收尾；对比急停只能等指令跑完）\n");
     }
     return 0;
 }

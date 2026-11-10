@@ -299,4 +299,101 @@ TEST(Executor, StopAllowsRunningTaskToFinish) {
     EXPECT(finished.load() == 1);                  // 跑完了
 }
 
+// 18. 停止令牌初始未置位；提交时自动挂到任务上（环节 14）
+TEST(Executor, TokenNotRequestedInitially) {
+    Executor ex(2);
+    EXPECT(!ex.token()->is_stop_requested());      // 初始未请求停止
+    ex.shutdown();
+}
+
+// 19. 请求停止后提交的任务在执行前被跳过（不清队列的惰性丢弃）
+//     确定性做法：先 request_stop，再提交——任务取到时令牌必然已置位。
+TEST(Executor, RequestStopSkipsPendingTasks) {
+    std::atomic<int> ran{0};
+    {
+        Executor ex(1);
+        ex.request_stop();                          // 先广播停止
+        for (int i = 0; i < 20; ++i) {
+            // request_stop 不等于关闭队列：submit 仍应成功（任务会被跳过）
+            const bool ok = ex.submit(Task([&] { ran.fetch_add(1); },
+                                            "skip" + std::to_string(i)));
+            EXPECT(ok);
+        }
+        ex.shutdown();                              // 等 worker 消费完这些"空任务"
+        EXPECT(ran.load() == 0);                    // 一个都没执行
+        EXPECT(ex.telemetry().skipped() == 20);     // 全部计入跳过
+        EXPECT(ex.telemetry().tasks_done() == 0);   // 执行数不被跳过污染
+    }
+}
+
+// 20. 正在执行的任务自查令牌后提前返回（协作式取消的核心）
+//     任务体每 1ms 检查一次 should_stop()，全跑完需 2s；
+//     中途 request_stop 后应很快返回（远小于满载耗时）。
+TEST(Executor, RunningTaskObservesStopAndExitsEarly) {
+    Executor ex(2);
+    const auto token = ex.token();                  // 共享令牌（拷贝 shared_ptr）
+    std::atomic<bool> started{false};
+    std::atomic<bool> cancelled{false};
+    ex.submit(Task([&, token] {
+        started.store(true);
+        for (int i = 0; i < 2000; ++i) {             // 满载 2000ms
+            if (token->is_stop_requested()) {       // 安全点自查
+                cancelled.store(true);
+                return;                             // 协作式退出（RAII 收尾）
+            }
+            std::this_thread::sleep_for(1ms);
+        }
+    }, "long"));
+    while (!started.load()) {                       // 事件同步：确保已开始执行
+        std::this_thread::yield();
+    }
+    const auto t0 = std::chrono::steady_clock::now();
+    ex.request_stop();                              // 只广播，不等待
+    ex.shutdown();                                  // 收尾（等 worker 退出）
+    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - t0);
+    EXPECT(cancelled.load());                       // 任务体看到了停止请求
+    EXPECT(elapsed.count() < 500);                  // 远小于满载 2000ms
+}
+
+// 21. request_stop 幂等、不阻塞、不清队列
+TEST(Executor, RequestStopIsIdempotentAndNonBlocking) {
+    Executor ex(2);
+    const auto t0 = std::chrono::steady_clock::now();
+    ex.request_stop();
+    ex.request_stop();                              // 重复调用无副作用
+    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - t0);
+    EXPECT(ex.token()->is_stop_requested());
+    EXPECT(elapsed.count() < 100);                  // 立即返回（不 join）
+    ex.shutdown();
+}
+
+// 22. 与环节 12 的集成：stop() 也广播令牌，自查的正在执行任务提前返回
+TEST(Executor, StopSignalsRunningTaskToExitEarly) {
+    Executor ex(1);
+    const auto token = ex.token();
+    std::atomic<bool> started{false};
+    std::atomic<bool> cancelled{false};
+    ex.submit(Task([&, token] {
+        started.store(true);
+        for (int i = 0; i < 1000; ++i) {             // 满载 1000ms
+            if (token->is_stop_requested()) {
+                cancelled.store(true);
+                return;
+            }
+            std::this_thread::sleep_for(1ms);
+        }
+    }, "long"));
+    while (!started.load()) {
+        std::this_thread::yield();
+    }
+    const auto t0 = std::chrono::steady_clock::now();
+    ex.stop();                                       // 急停：置令牌 + 丢队列 + join
+    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - t0);
+    EXPECT(cancelled.load());                        // 任务体提前退出
+    EXPECT(elapsed.count() < 300);                   // 不再等满载 1000ms
+}
+
 TEST_MAIN()

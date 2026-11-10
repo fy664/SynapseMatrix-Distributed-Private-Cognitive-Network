@@ -112,10 +112,16 @@ void Worker::run() {
             }
             continue;                  // 没抢到/到核心水位 → 继续服役
         }
-        // 取到任务：执行并上报统计（与环节 2 完全一致）
+        // 取到任务：执行并上报统计（与环节 2 一致）
+        // 环节 14：run() 返回"是否真的执行了"——
+        //   令牌已置位（协作式取消）→ 跳过任务体，只记 skipped，
+        //   不计执行数与耗时（否则吞吐指标被人为抬高）。
         // 用单调时钟测执行耗时（steady_clock 不受系统调时间影响）
         const auto start = std::chrono::steady_clock::now();
-        (*task)();                               // 执行任务体
+        if (!task->run()) {                      // 执行任务体（含取消判断）
+            telemetry_.record_skipped();         // 被取消 → 只记跳过
+            continue;
+        }
         const auto elapsed = std::chrono::duration_cast<
             std::chrono::microseconds>(std::chrono::steady_clock::now() -
                                        start);

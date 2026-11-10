@@ -57,6 +57,12 @@ public:
         rejected_.fetch_add(1);
     }
 
+    // 任务因协作式取消（环节 14）被跳过时调用：
+    // 与"执行"分开计数——跳过不是执行，混在一起会让吞吐指标失真
+    void record_skipped() {
+        skipped_.fetch_add(1);
+    }
+
     // 队列水位采样：记录历史最大积压（峰值，单调不减）。
     // 调用时机：每次 submit 成功后（入队使队列变长，可能创新高）。
     // 无锁实现：CAS 循环更新 max——
@@ -96,6 +102,11 @@ public:
         return rejected_.load();
     }
 
+    // 因协作式取消被跳过的任务数（环节 14）
+    [[nodiscard]] std::size_t skipped() const noexcept {
+        return skipped_.load();
+    }
+
     // 队列积压峰值（历史最大未消费任务数）——背压/容量规划依据
     [[nodiscard]] std::size_t peak_pending() const noexcept {
         return peak_pending_.load();
@@ -124,6 +135,7 @@ private:
     // 每 worker 一格；下标 = worker_id。构造定大小，永不 resize。
     std::vector<std::atomic<std::size_t>> done_per_worker_;
     std::atomic<std::size_t> rejected_{0};           // 拒绝计数
+    std::atomic<std::size_t> skipped_{0};            // 协取消跳过计数
     std::atomic<std::uint64_t> total_elapsed_us_{0}; // 总耗时（微秒）
     std::atomic<std::size_t> peak_pending_{0};       // 队列积压峰值
 };

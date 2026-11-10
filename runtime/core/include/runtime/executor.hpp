@@ -30,6 +30,7 @@
 #include <vector>
 
 #include "runtime/queue.hpp"
+#include "runtime/stop_token.hpp"
 #include "runtime/task.hpp"
 #include "runtime/telemetry.hpp"
 #include "runtime/worker.hpp"
@@ -79,11 +80,26 @@ public:
     void shutdown();
 
     // 急停（环节 12）：立即停止——丢弃队列中所有未执行任务，
-    // 等待正在执行的任务跑完（线程不可抢占，C++ 无协作式中断；
-    // Java Thread.stop() 同样已废弃，这是线程模型的物理限制）。
+    // 等待正在执行的任务跑完。
+    // 环节 14 起：stop() 同时置位停止令牌——任务体内自查
+    // should_stop() 的正在执行任务可提前返回（未自查的仍需等它跑完）。
     // 与 shutdown 互斥且幂等：先 stop 后 shutdown / 先 shutdown
     // 后 stop，第二次调用均为无操作（共用 shutdown_done_ 标志）。
     void stop();
+
+    // 协作式取消（环节 14）：只广播停止令牌，不清队列、不 join。
+    //   - 排队中的任务：Worker 取到后 run() 直接跳过（计入 skipped）
+    //   - 运行中的任务：任务体在安全点自查 should_stop() 后提前返回
+    // 与 stop() 的区别：stop 是"立刻收摊"（丢排队任务、等线程退出）；
+    // request_stop 是"请各位收尾"——调用方通常先 request_stop，
+    // 给一个宽限期，仍不结束再 stop。幂等：可多次调用。
+    void request_stop();
+
+    // 停止令牌（共享）：任务体里可通过 Task::should_stop() 自查；
+    // 也可被外部线程持有用于监控。空值不存在（构造即分配）。
+    [[nodiscard]] const StopTokenPtr& token() const noexcept {
+        return stop_token_;
+    }
 
     // 当前队列积压（Telemetry/调试）
     [[nodiscard]] std::size_t pending() const { return queue_.size(); }
@@ -123,6 +139,7 @@ private:
     std::size_t next_worker_id_ = 0;       // 下一个 worker 的 id（递增分配）
     std::vector<int> free_ids_;            // 退役回收的空闲 id（扩容时复用）
     bool shutdown_done_ = false;           // 幂等标志：shutdown 只执行一次
+    StopTokenPtr stop_token_ = std::make_shared<StopToken>();  // 取消令牌
 
     // 动态扩容（环节 9）：成功入队后检查积压，超阈值且未达上限
     // 则新增一个 worker。双重检查（先无锁看、再加锁复查）避免

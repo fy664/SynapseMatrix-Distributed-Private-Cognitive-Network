@@ -9,18 +9,23 @@
 //
 // 运行：runtime/build/Release/demo_threadpool.exe
 
+#include <array>
+#include <atomic>
 #include <chrono>
 #include <cstdio>
+#include <stdexcept>
 #include <thread>
 
 #include "runtime/executor.hpp"
 #include "runtime/task.hpp"
+#include "runtime/task_graph.hpp"
 #include "runtime/work_stealing.hpp"
 
 using namespace std::chrono_literals;
 using synapse::runtime::Executor;
 using synapse::runtime::Priority;
 using synapse::runtime::Task;
+using synapse::runtime::TaskGraph;
 using synapse::runtime::TaskOutcome;
 using synapse::runtime::WorkStealingPool;
 
@@ -276,6 +281,55 @@ int main() {
         std::printf("  统计：完成 %zu、失败 %zu、拒绝 %zu\n",
                     ex.telemetry().tasks_done(), ex.telemetry().failed(),
                     ex.telemetry().rejected());
+    }
+
+    // ---- 任务依赖图演示（环节 16）：DAG 按拓扑序并行推进 ----
+    {
+        Executor ex(4);
+        TaskGraph graph(ex);
+
+        std::array<std::atomic<int>, 5> order{};
+        for (auto& o : order) { o.store(-1); }
+        std::atomic<int> ticket{0};   // 全局执行序号
+
+        // 模拟一条数据处理流水线：
+        //   fetch(0) → parse(1) + checksum(3) → merge(2) → report(4)
+        auto id_fetch = graph.add(Task([&order, &ticket] {
+            std::this_thread::sleep_for(40ms);        // 模拟 IO
+            order[0].store(ticket.fetch_add(1));
+        }, "fetch"));
+        auto id_parse = graph.add(Task([&order, &ticket] {
+            std::this_thread::sleep_for(20ms);        // 模拟解析
+            order[1].store(ticket.fetch_add(1));
+        }, "parse"), {id_fetch});
+        auto id_checksum = graph.add(Task([&order, &ticket] {
+            std::this_thread::sleep_for(60ms);        // 与 parse 并行、更慢
+            order[3].store(ticket.fetch_add(1));
+        }, "checksum"), {id_fetch});
+        auto id_merge = graph.add(Task([&order, &ticket] {
+            order[2].store(ticket.fetch_add(1));
+        }, "merge"), {id_parse, id_checksum});
+        auto id_report = graph.add(Task([&order, &ticket] {
+            order[4].store(ticket.fetch_add(1));
+        }, "report"), {id_merge});
+
+        const auto t0 = std::chrono::steady_clock::now();
+        graph.start();
+        // 等末端节点（wait 返回最终状态，[[nodiscard]] 必须接住）
+        const TaskOutcome report_state = graph.handle(id_report).wait();
+        const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                            std::chrono::steady_clock::now() - t0).count();
+
+        std::printf("\n=== 任务依赖图演示（DAG）===\n");
+        std::printf("  5 个节点：fetch → (parse ‖ checksum) → merge → report\n");
+        std::printf("  执行序号：fetch=%d parse=%d checksum=%d merge=%d report=%d\n",
+                    order[0].load(), order[1].load(), order[3].load(),
+                    order[2].load(), order[4].load());
+        std::printf("  图表已全部落定：%s；末端节点 wait() → %s\n",
+                    graph.finished() ? "是" : "否",
+                    report_state == TaskOutcome::Done ? "Done（完成）" : "非 Done");
+        std::printf("  管线总耗时 %lldms（串行需 120ms+，并行省掉 checksum 与 parse 的差）\n",
+                    static_cast<long long>(ms));
     }
     return 0;
 }

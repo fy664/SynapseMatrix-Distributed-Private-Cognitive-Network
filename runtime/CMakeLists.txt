@@ -31,6 +31,7 @@ add_library(synapse_core STATIC
     core/src/worker.cpp
     core/src/executor.cpp
     core/src/work_stealing.cpp
+    core/src/task_graph.cpp
 )
 
 target_include_directories(synapse_core PUBLIC core/include)
@@ -67,6 +68,11 @@ add_test(NAME test_priority COMMAND test_priority)
 add_executable(test_work_stealing core/tests/test_work_stealing.cpp)
 target_link_libraries(test_work_stealing PRIVATE synapse_core)
 add_test(NAME test_work_stealing COMMAND test_work_stealing)
+
+# 单测：任务依赖图 DAG 调度（Month 3 环节 16）
+add_executable(test_task_graph core/tests/test_task_graph.cpp)
+target_link_libraries(test_task_graph PRIVATE synapse_core)
+add_test(NAME test_task_graph COMMAND test_task_graph)
 
 # 演示：Executor 驱动的多线程 Task Runtime
 add_executable(demo_threadpool core/tests/demo_threadpool.cpp)

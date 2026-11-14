@@ -24,12 +24,26 @@
 
 #include "runtime/task_graph.hpp"
 
+#include <algorithm>
+#include <chrono>
 #include <functional>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <utility>
 
 namespace synapse::runtime {
+
+namespace {
+// 当前时刻（steady_clock 微秒）
+// steady_clock 是单调时钟：不会被系统校时/时区改动影响，专用于测耗时；
+// 返回 long long 便于直接塞进 atomic<long long>
+long long NowMicros() {
+    return std::chrono::duration_cast<std::chrono::microseconds>(
+               std::chrono::steady_clock::now().time_since_epoch())
+        .count();
+}
+}  // namespace
 
 TaskGraph::TaskGraph(Executor& executor)
     : state_(std::make_shared<State>()), executor_(executor) {
@@ -131,7 +145,10 @@ void TaskGraph::submit_static(State& state, Executor& executor, NodeId id) {
             }
             return;
         }
+        // 环节 17：记录真实起止时刻（steady_clock 单调时钟，单位微秒）
+        node.begin_us.store(NowMicros(), std::memory_order_relaxed);
         static_cast<void>(node.task.run());    // [[nodiscard]]：结果走 last_outcome
+        node.end_us.store(NowMicros(), std::memory_order_relaxed);
         const TaskOutcome outcome = node.task.last_outcome();
         if (!settle_static(*shared, id, outcome)) {
             return;                           // 已被 request_stop 抢先结算
@@ -209,6 +226,204 @@ std::size_t TaskGraph::node_count() const noexcept {
 bool TaskGraph::finished() const noexcept {
     return state_->settled_count.load(std::memory_order_relaxed) ==
            state_->nodes.size();
+}
+
+// ===================== 环节 17：时序分析与关键路径 =====================
+// 408 AOE 网映射：
+//   - 顶点活动（本实现是 AOV 形态）→ 把"节点耗时"当边权，等价于 AOE 的
+//     活动时间 a；求的是"节点加权 DAG 的最长路径"
+//   - ve（最早开始）：前驱全部结束后才能开始 → ve[j] = max(ve[i] + a[i])
+//   - vl（最晚开始）：不能拖累总工期 → vl[j] = min(vl[k] - a[j])，
+//     终点 vl = 总工期
+//   - 松弛时间 = vl - ve；松弛为 0 的活动就是关键活动，串起来是关键路径
+
+std::vector<TaskGraph::NodeTiming> TaskGraph::timings() const {
+    const std::size_t n = state_->nodes.size();
+    std::vector<bool> done(n, false);
+    std::size_t done_count = 0;
+    for (std::size_t i = 0; i < n; ++i) {
+        done[i] = state_->nodes[i]->completion->state() == TaskOutcome::Done;
+        if (done[i]) {
+            ++done_count;
+        }
+    }
+    std::vector<NodeTiming> result;
+    if (done_count == 0) {
+        return result;                       // 没有成功节点 → 空表
+    }
+
+    // ---- 前置：前驱表（Node 只存了后继，这里反向扫一遍）----
+    std::vector<std::vector<NodeId>> preds(n);
+    for (std::size_t i = 0; i < n; ++i) {
+        for (const NodeId succ : state_->nodes[i]->succ) {
+            preds[succ].push_back(i);
+        }
+    }
+
+    // ---- 拓扑序（只在 Done 子图上做 Kahn）----
+    std::vector<int> indeg(n, 0);
+    for (std::size_t i = 0; i < n; ++i) {
+        if (!done[i]) {
+            continue;
+        }
+        for (const NodeId succ : state_->nodes[i]->succ) {
+            if (done[succ]) {
+                ++indeg[succ];
+            }
+        }
+    }
+    std::vector<NodeId> order;
+    order.reserve(done_count);
+    for (std::size_t i = 0; i < n; ++i) {
+        if (done[i] && indeg[i] == 0) {
+            order.push_back(i);
+        }
+    }
+    for (std::size_t head = 0; head < order.size(); ++head) {
+        const NodeId cur = order[head];
+        for (const NodeId succ : state_->nodes[cur]->succ) {
+            if (done[succ] && --indeg[succ] == 0) {
+                order.push_back(succ);
+            }
+        }
+    }
+
+    // ---- 耗时（微秒；异常/跳过节点不进表，所以一定是非负）----
+    std::vector<long long> dur(n, 0);
+    for (const NodeId id : order) {
+        const long long begin = state_->nodes[id]->begin_us.load(
+            std::memory_order_relaxed);
+        const long long end = state_->nodes[id]->end_us.load(
+            std::memory_order_relaxed);
+        dur[id] = (end > begin && begin > 0) ? (end - begin) : 0;
+    }
+
+    // ---- 正向：ve / ef（前驱最大结束时刻 = 自己的最早开始）----
+    std::vector<long long> es(n, 0);
+    std::vector<long long> ef(n, 0);
+    for (const NodeId id : order) {
+        long long start = 0;
+        for (const NodeId p : preds[id]) {
+            if (done[p]) {
+                start = std::max(start, ef[p]);
+            }
+        }
+        es[id] = start;
+        ef[id] = start + dur[id];
+    }
+    long long makespan = 0;
+    for (const NodeId id : order) {
+        makespan = std::max(makespan, ef[id]);
+    }
+
+    // ---- 反向：lf / ls（后继最小开始时刻 = 自己的最晚结束）----
+    std::vector<long long> ls(n, 0);
+    std::vector<long long> lf(n, 0);
+    for (std::size_t k = order.size(); k > 0; --k) {
+        const NodeId id = order[k - 1];
+        long long finish = makespan;         // 没有后继（汇点）→ 最晚 = 总工期
+        for (const NodeId s : state_->nodes[id]->succ) {
+            if (done[s]) {
+                finish = std::min(finish, ls[s]);
+            }
+        }
+        lf[id] = finish;
+        ls[id] = finish - dur[id];
+    }
+
+    // ---- 汇总（按节点 id 升序，便于阅读）----
+    result.reserve(done_count);
+    for (std::size_t i = 0; i < n; ++i) {
+        if (!done[i]) {
+            continue;
+        }
+        NodeTiming t;
+        t.id = i;
+        t.name = state_->nodes[i]->task.id();
+        t.duration = std::chrono::microseconds(dur[i]);
+        t.earliest_start = std::chrono::microseconds(es[i]);
+        t.earliest_finish = std::chrono::microseconds(ef[i]);
+        t.latest_start = std::chrono::microseconds(ls[i]);
+        t.latest_finish = std::chrono::microseconds(lf[i]);
+        const long long slack = ls[i] - es[i];
+        t.slack = std::chrono::microseconds(slack > 0 ? slack : 0);
+        t.critical = (slack <= 0);            // 松弛为 0 → 关键活动
+        result.push_back(std::move(t));
+    }
+    return result;
+}
+
+std::optional<TaskGraph::CriticalPath> TaskGraph::critical_path() const {
+    const auto table = timings();
+    if (table.empty()) {
+        return std::nullopt;                  // 没有任何成功节点 → 无关键路径
+    }
+
+    // 终点 = 最长路径的"汇点"：在没有任何 Done 后继的节点里取 EF 最大者。
+    // （不能直接取全表 EF 最大：菱形下 merge/report 与 checksum 的 EF 相同，
+    //   取到中间节点会把后半段路径截断）
+    std::size_t best = 0;
+    bool best_found = false;
+    for (std::size_t k = 0; k < table.size(); ++k) {
+        bool has_done_succ = false;
+        for (const NodeId s : state_->nodes[table[k].id]->succ) {
+            if (state_->nodes[s]->completion->state() == TaskOutcome::Done) {
+                has_done_succ = true;
+                break;
+            }
+        }
+        if (has_done_succ) {
+            continue;
+        }
+        if (!best_found ||
+            table[k].earliest_finish > table[best].earliest_finish) {
+            best = k;
+            best_found = true;
+        }
+    }
+    if (!best_found) {
+        // 兜底：所有 Done 节点都有 Done 后继（理论上有环才会发生）
+        for (std::size_t k = 1; k < table.size(); ++k) {
+            if (table[k].earliest_finish > table[best].earliest_finish) {
+                best = k;
+            }
+        }
+    }
+
+    // 回溯：找"结束时刻 == 我的开始时刻且松弛为 0"的前驱，逐段倒推
+    std::vector<NodeId> rev;
+    std::size_t cur = best;
+    rev.push_back(table[cur].id);
+    const std::size_t guard = table.size() + 1;   // 防御性上限，防环
+    for (std::size_t step = 0; step < guard; ++step) {
+        bool moved = false;
+        // 在关键节点里找"直接前驱 + 结束时刻等于我的开始时刻"的那个
+        for (std::size_t k = 0; k < table.size(); ++k) {
+            if (!table[k].critical) {
+                continue;
+            }
+            if (table[k].earliest_finish == table[cur].earliest_start &&
+                table[k].earliest_finish > std::chrono::microseconds(0)) {
+                // 该节点的超前驱，且是它的直接前驱（用 succ 校验）
+                const auto& succ = state_->nodes[table[k].id]->succ;
+                if (std::find(succ.begin(), succ.end(), table[cur].id) !=
+                    succ.end()) {
+                    cur = k;
+                    rev.push_back(table[k].id);
+                    moved = true;
+                    break;
+                }
+            }
+        }
+        if (!moved) {
+            break;
+        }
+    }
+
+    CriticalPath path;
+    path.total = table[best].earliest_finish;
+    path.nodes.assign(rev.rbegin(), rev.rend());   // 倒序 → 起点到终点
+    return path;
 }
 
 }  // namespace synapse::runtime

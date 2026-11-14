@@ -29,18 +29,25 @@
 //   - AOV 网 + 拓扑排序：入度归零就绪
 //   - 信号量 P/V：入度计数可看作"需要几个 V 才能唤醒"（前驱完成 = V）
 //   - 死锁：有环的依赖图永远有节点入度不为 0 = 循环等待 → 必须提前检测
+//   - AOE 网关键路径（环节 17）：任务耗时做权，最长路径 = 项目最短工期；
+//     节点的松弛量 slack = 最晚开始 - 最早开始，slack = 0 即在关键路径上
 //
 // 语法讲解：
 //   - std::shared_ptr<State>：图的数据被提交出去的包装任务共享持有，
 //     即使 TaskGraph 对象先销毁，任务仍能安全访问（shared_ptr 保活）
 //   - vector<unique_ptr<Node>>：Node 含 atomic（不可移动）→ 用指针容器
 //   - atomic<int>::fetch_sub：原子减一并返回旧值（==1 表示减到 0）
+//   - std::optional 返回值：图还没跑完/全都失败时"没有关键路径"用 nullopt
+//     表示，比返回空指针或空 vector 语义更清楚
 
 #pragma once
 
 #include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <memory>
+#include <optional>
+#include <string>
 #include <vector>
 
 #include "runtime/executor.hpp"
@@ -53,6 +60,26 @@ namespace synapse::runtime {
 class TaskGraph {
 public:
     using NodeId = std::size_t;
+
+    // ---- 环节 17：耗时统计与关键路径（AOE 网映射）----
+    // 单节点的时序分析结果（单位统一用微秒，整数运算无浮点误差）
+    struct NodeTiming {
+        NodeId id{};                              // 节点 id
+        std::string name;                         // 任务 id（便于阅读）
+        std::chrono::microseconds duration{};     // 实际耗时（= 活动时间 a）
+        std::chrono::microseconds earliest_start{};   // ve：最早开始
+        std::chrono::microseconds earliest_finish{};  // 最早结束
+        std::chrono::microseconds latest_start{};     // vl：最晚开始（不拖期）
+        std::chrono::microseconds latest_finish{};    // 最晚结束
+        std::chrono::microseconds slack{};            // 松弛量 = 最晚 - 最早
+        bool critical = false;                    // slack == 0 → 关键活动
+    };
+
+    // 关键路径结果：最长耗时链（= 项目最短完成时间）
+    struct CriticalPath {
+        std::vector<NodeId> nodes;                // 起点 → 终点的节点序列
+        std::chrono::microseconds total{};         // 关键路径总耗时
+    };
 
     // 绑定一个执行器（不拥有它，生命周期由调用方保证）
     explicit TaskGraph(Executor& executor);
@@ -88,6 +115,15 @@ public:
     // 是否全部节点都已落定（完成/跳过/失败）
     [[nodiscard]] bool finished() const noexcept;
 
+    // ---- 环节 17：时序分析 ----
+    // 已成功完成（Done）节点的时间分析表（ES/EF/LS/LF/slack）。
+    // 图未跑完时也可调用，只统计当时已经 Done 的节点。
+    [[nodiscard]] std::vector<NodeTiming> timings() const;
+
+    // 关键路径：Done 子图中的最长耗时链；
+    // 没有任何 Done 节点时返回 std::nullopt。
+    [[nodiscard]] std::optional<CriticalPath> critical_path() const;
+
 private:
     // 单个节点
     struct Node {
@@ -100,6 +136,9 @@ private:
         std::vector<NodeId> succ;         // 后继（完成任务时递减它们的 deps）
         TaskCompletionPtr completion;     // 句柄共享状态
         std::atomic<bool> settled{false}; // 是否已落定（防重复结算/递归）
+        // 环节 17：实际起止时刻（steady_clock 微秒，0 = 没记录到）
+        std::atomic<long long> begin_us{0};
+        std::atomic<long long> end_us{0};
     };
 
     // 图数据：被包装任务共享持有（shared_ptr 保活）

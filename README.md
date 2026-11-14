@@ -130,7 +130,8 @@ runtime/build/Release/demo_threadpool.exe # 演示：优先级插队 + 并发执
 - [x] 2026-11-10 Month 3 环节 14：协作式中断（StopToken 共享令牌；Task::run 执行前跳过（计 skipped）+ 任务体安全点自查；stop() 同时广播令牌，+5 单测，71 全过）
 - [x] 2026-11-10 Month 3 环节 15：任务句柄与异常安全（TaskHandle + TaskCompletion 条件变量等待/超时；Done/Skipped/Failed/Rejected 四态；任务体异常被捕获不崩池，+5 单测，76 全过）
 - [x] 2026-11-13 Month 3 环节 16：任务依赖图（TaskGraph DAG 调度；入度归零即提交、AOV 网拓扑序并行推进；失败/取消递归传播 Skipped，+6 单测，82 全过）
-- [ ] Month 3：双端无锁队列 / 统一线程池 API / 关键路径分析
+- [x] 2026-11-14 Month 3 环节 17：关键路径与耗时分析（steady_clock 记录节点起止，AOE 正反两遍扫描求 ve/vl，slack=0 判定关键活动并回溯最长路径，+4 单测，86 全过）
+- [ ] Month 3：双端无锁队列 / 统一线程池 API / 关键路径优化倒推
 
 ## 学习执行模式
 

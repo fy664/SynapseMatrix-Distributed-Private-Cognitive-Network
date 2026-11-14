@@ -330,6 +330,38 @@ int main() {
                     report_state == TaskOutcome::Done ? "Done（完成）" : "非 Done");
         std::printf("  管线总耗时 %lldms（串行需 120ms+，并行省掉 checksum 与 parse 的差）\n",
                     static_cast<long long>(ms));
+
+        // ---- 环节 17：关键路径（AOE 最长路径 = 项目最短工期）----
+        const auto to_ms = [](std::chrono::microseconds us) {
+            return std::chrono::duration_cast<std::chrono::milliseconds>(us)
+                .count();
+        };
+        const auto table = graph.timings();
+        const auto cpath = graph.critical_path();
+        if (cpath) {
+            std::printf("  关键路径：");
+            for (std::size_t k = 0; k < cpath->nodes.size(); ++k) {
+                for (const auto& t : table) {
+                    if (t.id == cpath->nodes[k]) {
+                        std::printf("%s%s", k == 0 ? "" : " → ", t.name.c_str());
+                    }
+                }
+            }
+            std::printf("（总工期 %lldms）\n", to_ms(cpath->total));
+            std::printf("  时序表（ES 最早开始 / EF 最早结束 / 松弛 = 最晚-最早）：\n");
+            for (const auto& t : table) {
+                std::printf("    %-9s 耗时 %5lldms  ES %5lldms  EF %5lldms  "
+                            "松弛 %5lldms%s\n",
+                            t.name.c_str(),
+                            static_cast<long long>(to_ms(t.duration)),
+                            static_cast<long long>(to_ms(t.earliest_start)),
+                            static_cast<long long>(to_ms(t.earliest_finish)),
+                            static_cast<long long>(to_ms(t.slack)),
+                            t.critical ? "  [关键]" : "");
+            }
+        } else {
+            std::printf("  无成功节点，无法计算关键路径\n");
+        }
     }
     return 0;
 }
